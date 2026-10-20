@@ -7,7 +7,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '11' }
+        with: { distribution: temurin, java-version: '17' }
       - uses: android-actions/setup-android@v3
       - name: Instalar NDK e plataforma
         run: |
@@ -32,6 +32,8 @@ jobs:
           mkdir -p $HOME/proj/MutantFridge/Resources
           cp -r /tmp/a/assets/* $HOME/proj/MutantFridge/Resources/
           cp Classes/AppDelegate.cpp $HOME/proj/MutantFridge/Classes/AppDelegate.cpp
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '11' }
       - name: Compilar APK
         run: |
           cd $HOME/proj/MutantFridge/proj.android

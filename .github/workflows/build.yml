@@ -1,1 +1,43 @@
-
+name: Build APK
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '11' }
+      - uses: android-actions/setup-android@v3
+      - name: Instalar NDK e plataforma
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;21.4.7075529" "platforms;android-30" "build-tools;30.0.3" "cmake;3.10.2.4988404"
+      - name: Baixar cocos2d-x 4.0
+        run: |
+          git clone --depth 1 --branch cocos2d-x-4.0 https://github.com/cocos2d/cocos2d-x.git $HOME/cocos2d-x
+          cd $HOME/cocos2d-x
+          git submodule update --init --depth 1
+          python3 download-deps.py -r yes
+      - name: Criar projeto
+        run: |
+          export COCOS_CONSOLE_ROOT=$HOME/cocos2d-x/tools/cocos2d-console/bin
+          export NDK_ROOT=$ANDROID_SDK_ROOT/ndk/21.4.7075529
+          export ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT
+          python3 $COCOS_CONSOLE_ROOT/cocos.py new MutantFridge -l cpp -p com.mfm.port -d $HOME/proj
+      - name: Juntar assets e codigo
+        run: |
+          cat assets_parts/assets.zip.part* > /tmp/assets.zip
+          unzip -q /tmp/assets.zip -d /tmp/a
+          mkdir -p $HOME/proj/MutantFridge/Resources
+          cp -r /tmp/a/assets/* $HOME/proj/MutantFridge/Resources/
+          cp Classes/AppDelegate.cpp $HOME/proj/MutantFridge/Classes/AppDelegate.cpp
+      - name: Compilar APK
+        run: |
+          cd $HOME/proj/MutantFridge/proj.android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mutant-fridge-apk
+          path: ~/proj/MutantFridge/proj.android/app/build/outputs/apk/debug/*.apk

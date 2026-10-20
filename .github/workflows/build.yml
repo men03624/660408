@@ -66,6 +66,11 @@ jobs:
           EOF
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '11' }
+      - name: Deixar so o CMake 3.10.2
+        run: |
+          ls $ANDROID_SDK_ROOT/cmake
+          sudo find $ANDROID_SDK_ROOT/cmake -mindepth 1 -maxdepth 1 ! -name '3.10.2*' -exec rm -rf {} +
+          ls $ANDROID_SDK_ROOT/cmake
       - name: Compilar APK
         run: |
           cd $HOME/proj/MutantFridge/proj.android

@@ -15,9 +15,11 @@ jobs:
           $SDKM "ndk;21.4.7075529" "platforms;android-30" "build-tools;30.0.3" "cmake;3.10.2.4988404"
       - name: Baixar cocos2d-x 4.0
         run: |
+          git config --global url."https://github.com/".insteadOf "git://github.com/"
           git clone --depth 1 --branch cocos2d-x-4.0 https://github.com/cocos2d/cocos2d-x.git $HOME/cocos2d-x
           cd $HOME/cocos2d-x
-          git submodule update --init --depth 1
+          git submodule update --init --depth 1 tools/cocos2d-console tools/bindings-generator
+          pip3 install pyyaml requests
           python3 download-deps.py -r yes
       - name: Criar projeto
         run: |

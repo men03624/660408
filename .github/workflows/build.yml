@@ -23,9 +23,12 @@ jobs:
           python3 download-deps.py -r yes
       - name: Criar projeto
         run: |
+          mkdir -p $HOME/shim
+          printf 'import builtins\nbuiltins.raw_input=input\nbuiltins.unicode=str\nbuiltins.basestring=str\nbuiltins.xrange=range\nbuiltins.long=int\n' > $HOME/shim/sitecustomize.py
+          export PYTHONPATH=$HOME/shim
           export COCOS_CONSOLE_ROOT=$HOME/cocos2d-x/tools/cocos2d-console/bin
           export NDK_ROOT=$ANDROID_SDK_ROOT/ndk/21.4.7075529
-          python3 $COCOS_CONSOLE_ROOT/cocos.py new MutantFridge -l cpp -p com.mfm.port -d $HOME/proj
+          python3 $COCOS_CONSOLE_ROOT/cocos.py --agreement n new MutantFridge -l cpp -p com.mfm.port -d $HOME/proj
       - name: Juntar assets e codigo
         run: |
           cat assets_parts/assets.zip.part* > /tmp/assets.zip

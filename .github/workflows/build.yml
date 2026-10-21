@@ -19,9 +19,22 @@ jobs:
           git clone --depth 1 --branch cocos2d-x-4.0 https://github.com/cocos2d/cocos2d-x.git $HOME/cocos2d-x
           cd $HOME/cocos2d-x
           git submodule update --init --depth 1 tools/cocos2d-console tools/bindings-generator
-          pip3 install pyyaml requests
-          python3 download-deps.py -r yes
+          cat external/config.json
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python2 || true
+          (python2 download-deps.py -r yes) || echo "python2 falhou"
+          if [ ! -f external/CMakeLists.txt ]; then
+            echo "Baixando dependencias direto"
+            URL=$(python3 -c "import json;c=json.load(open('external/config.json'));print(c.get('repo_parent','https://github.com/cocos2d/')+c.get('repo_name','cocos2d-x-3rd-party-libs-bin')+'/archive/'+c['version']+'.zip')")
+            echo $URL
+            curl -L -o /tmp/deps.zip "$URL"
+            mkdir -p /tmp/deps
+            unzip -q /tmp/deps.zip -d /tmp/deps
+            ls /tmp/deps
+            cp -r /tmp/deps/*/* external/
+          fi
           ls external
+          test -f external/CMakeLists.txt
       - name: Criar projeto copiando o template
         run: |
           mkdir -p $HOME/proj
@@ -68,21 +81,22 @@ jobs:
         with: { distribution: temurin, java-version: '11' }
       - name: Deixar so o CMake 3.10.2
         run: |
-          ls $ANDROID_SDK_ROOT/cmake
           sudo find $ANDROID_SDK_ROOT/cmake -mindepth 1 -maxdepth 1 ! -name '3.10.2*' -exec rm -rf {} +
           ls $ANDROID_SDK_ROOT/cmake
       - name: Diagnostico CMake
         run: |
           NDK=$ANDROID_SDK_ROOT/ndk/21.4.7075529
           CM=$(ls -d $ANDROID_SDK_ROOT/cmake/3.10.2*)/bin
-          export PATH=$CM:$PATH
-          $CM/cmake -H$HOME/proj/MutantFridge -B/tmp/cmb -G Ninja -DANDROID_ABI=armeabi-v7a -DANDROID_PLATFORM=android-16 -DANDROID_NDK=$NDK -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDROID_STL=c++_static -DANDROID_TOOLCHAIN=clang -DANDROID_ARM_NEON=TRUE -DCMAKE_BUILD_TYPE=Debug 2>&1 | grep -v "^-- " | tail -40 || true
+          $CM/cmake -H$HOME/proj/MutantFridge -B/tmp/cmb -G Ninja -DANDROID_ABI=armeabi-v7a -DANDROID_PLATFORM=android-16 -DANDROID_NDK=$NDK -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDROID_STL=c++_static -DANDROID_TOOLCHAIN=clang -DANDROID_ARM_NEON=TRUE -DCMAKE_BUILD_TYPE=Debug > /tmp/cmake.txt 2>&1 || true
+          echo "===== ERROS DO CMAKE ====="
+          grep -n -B1 -A8 "CMake Error" /tmp/cmake.txt | head -50
+          echo "===== FIM DO LOG ====="
+          tail -8 /tmp/cmake.txt
       - name: Compilar APK
         run: |
           cd $HOME/proj/MutantFridge/proj.android
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
           echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/21.4.7075529" >> local.properties
-          ls
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4

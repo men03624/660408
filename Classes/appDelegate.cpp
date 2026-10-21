@@ -1,9 +1,5 @@
 #include "AppDelegate.h"
 #include "cocos2d.h"
-#if __has_include("editor-support/cocosbuilder/CocosBuilder.h")
-#include "editor-support/cocosbuilder/CocosBuilder.h"
-#define HAVE_CCB 1
-#endif
 USING_NS_CC;
 
 AppDelegate::AppDelegate() {}
@@ -14,6 +10,16 @@ void AppDelegate::initGLContextAttrs() {
     GLView::setGLContextAttrs(glContextAttrs);
 }
 
+static Vector<SpriteFrame*> framesOf(const char* fmt, int n) {
+    Vector<SpriteFrame*> v;
+    auto cache = SpriteFrameCache::getInstance();
+    for (int i = 0; i < n; i++) {
+        auto f = cache->getSpriteFrameByName(StringUtils::format(fmt, i));
+        if (f) v.pushBack(f);
+    }
+    return v;
+}
+
 bool AppDelegate::applicationDidFinishLaunching() {
     auto director = Director::getInstance();
     auto glview = director->getOpenGLView();
@@ -21,18 +27,44 @@ bool AppDelegate::applicationDidFinishLaunching() {
     glview->setDesignResolutionSize(480, 320, ResolutionPolicy::FIXED_HEIGHT);
     FileUtils::getInstance()->addSearchPath("data");
     FileUtils::getInstance()->addSearchPath("textures");
+
     auto scene = Scene::create();
-    bool ok = false;
-#ifdef HAVE_CCB
-    {
-        using namespace cocosbuilder;
-        NodeLoaderLibrary* lib = NodeLoaderLibrary::newDefaultNodeLoaderLibrary();
-        CCBReader* reader = new CCBReader(lib);
-        Node* menu = reader->readNodeGraphFromFile("GameMainMenu.ccbi");
-        if (menu) { scene->addChild(menu); ok = true; }
-    }
-#endif
-    if (!ok) { scene->addChild(Label::createWithSystemFont("Mutant Fridge Mayhem", "Arial", 24)); }
+    auto vs = director->getVisibleSize();
+    auto org = director->getVisibleOrigin();
+    auto cache = SpriteFrameCache::getInstance();
+    std::string status = "Assets: ";
+
+    cache->addSpriteFramesWithFile("mfm-game-stage1-bg.plist", "mfm-game-stage1-bg.png");
+    auto bgf = cache->getSpriteFrameByName("stages_c1_mainbg.png");
+    if (bgf) {
+        auto bg = Sprite::createWithSpriteFrame(bgf);
+        bg->setScale(vs.height / bg->getContentSize().height);
+        bg->setPosition(org.x + vs.width / 2, org.y + vs.height / 2);
+        scene->addChild(bg);
+        status += "fundo OK  ";
+    } else { status += "fundo FALHOU  "; }
+
+    cache->addSpriteFramesWithFile("mfm-game-gumball-sprites.plist", "mfm-game-gumball-sprites.png");
+    auto body = framesOf("char_gumball_idle_%03d.png", 8);
+    auto arms = framesOf("char_gumball_idle_arms_%03d.png", 8);
+    if (!body.empty()) {
+        auto g = Sprite::createWithSpriteFrame(body.at(0));
+        g->setPosition(org.x + vs.width / 2, org.y + vs.height * 0.45f);
+        g->runAction(RepeatForever::create(Animate::create(Animation::createWithSpriteFrames(body, 0.07f))));
+        scene->addChild(g, 1);
+        if (!arms.empty()) {
+            auto a = Sprite::createWithSpriteFrame(arms.at(0));
+            a->setPosition(g->getPosition());
+            a->runAction(RepeatForever::create(Animate::create(Animation::createWithSpriteFrames(arms, 0.07f))));
+            scene->addChild(a, 2);
+        }
+        status += "Gumball OK (" + StringUtils::format("%d", (int)body.size()) + " quadros)";
+    } else { status += "Gumball FALHOU"; }
+
+    auto label = Label::createWithSystemFont(status, "Arial", 14);
+    label->setPosition(org.x + vs.width / 2, org.y + 16);
+    scene->addChild(label, 10);
+
     director->runWithScene(scene);
     return true;
 }

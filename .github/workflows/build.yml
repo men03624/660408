@@ -1,73 +1,71 @@
-#include "AppDelegate.h"
-#include "cocos2d.h"
-USING_NS_CC;
-
-AppDelegate::AppDelegate() {}
-AppDelegate::~AppDelegate() {}
-
-void AppDelegate::initGLContextAttrs() {
-    GLContextAttrs glContextAttrs = {8, 8, 8, 8, 24, 8, 0};
-    GLView::setGLContextAttrs(glContextAttrs);
-}
-
-static Vector<SpriteFrame*> framesOf(const char* fmt, int n) {
-    Vector<SpriteFrame*> v;
-    auto cache = SpriteFrameCache::getInstance();
-    for (int i = 1; i <= n; i++) {
-        auto f = cache->getSpriteFrameByName(StringUtils::format(fmt, i));
-        if (f) v.pushBack(f);
-    }
-    return v;
-}
-
-bool AppDelegate::applicationDidFinishLaunching() {
-    auto director = Director::getInstance();
-    auto glview = director->getOpenGLView();
-    if (!glview) { glview = GLViewImpl::create("Mutant Fridge Mayhem"); director->setOpenGLView(glview); }
-    glview->setDesignResolutionSize(480, 320, ResolutionPolicy::FIXED_HEIGHT);
-    FileUtils::getInstance()->addSearchPath("data");
-    FileUtils::getInstance()->addSearchPath("textures");
-
-    auto scene = Scene::create();
-    auto vs = director->getVisibleSize();
-    auto org = director->getVisibleOrigin();
-    auto cache = SpriteFrameCache::getInstance();
-    std::string status = "Assets: ";
-
-    cache->addSpriteFramesWithFile("mfm-game-stage1-bg.plist", "mfm-game-stage1-bg.png");
-    auto bgf = cache->getSpriteFrameByName("stages_c1_mainbg.png");
-    if (bgf) {
-        auto bg = Sprite::createWithSpriteFrame(bgf);
-        bg->setScale(vs.height / bg->getContentSize().height);
-        bg->setPosition(org.x + vs.width / 2, org.y + vs.height / 2);
-        scene->addChild(bg);
-        status += "fundo OK  ";
-    } else { status += "fundo FALHOU  "; }
-
-    cache->addSpriteFramesWithFile("mfm-game-gumball-sprites.plist", "mfm-game-gumball-sprites.png");
-    auto body = framesOf("char_gumball_idle_%03d.png", 8);
-    auto arms = framesOf("char_gumball_idle_arms_%03d.png", 8);
-    if (!body.empty()) {
-        auto g = Sprite::createWithSpriteFrame(body.at(0));
-        g->setPosition(org.x + vs.width / 2, org.y + vs.height * 0.45f);
-        g->runAction(RepeatForever::create(Animate::create(Animation::createWithSpriteFrames(body, 0.07f))));
-        scene->addChild(g, 1);
-        if (!arms.empty()) {
-            auto a = Sprite::createWithSpriteFrame(arms.at(0));
-            a->setPosition(g->getPosition());
-            a->runAction(RepeatForever::create(Animate::create(Animation::createWithSpriteFrames(arms, 0.07f))));
-            scene->addChild(a, 2);
-        }
-        status += "Gumball OK (" + StringUtils::format("%d", (int)body.size()) + " quadros)";
-    } else { status += "Gumball FALHOU"; }
-
-    auto label = Label::createWithSystemFont(status, "Arial", 14);
-    label->setPosition(org.x + vs.width / 2, org.y + 16);
-    scene->addChild(label, 10);
-
-    director->runWithScene(scene);
-    return true;
-}
-
-void AppDelegate::applicationDidEnterBackground() { Director::getInstance()->stopAnimation(); }
-void AppDelegate::applicationWillEnterForeground() { Director::getInstance()->startAnimation(); }
+name: Build APK
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: Instalar NDK e plataforma
+        run: |
+          SDKM=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager
+          yes | $SDKM --licenses > /dev/null || true
+          $SDKM "ndk;21.4.7075529" "platforms;android-30" "build-tools;30.0.3" "cmake;3.10.2.4988404"
+      - name: Baixar cocos2d-x 4.0
+        run: |
+          git config --global url."https://github.com/".insteadOf "git://github.com/"
+          git clone --depth 1 --branch cocos2d-x-4.0 https://github.com/cocos2d/cocos2d-x.git $HOME/cocos2d-x
+          cd $HOME/cocos2d-x
+          git submodule update --init --depth 1 tools/cocos2d-console tools/bindings-generator
+          cat external/config.json
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python2 || true
+          (python2 download-deps.py -r yes) || echo "python2 falhou"
+          if [ ! -f external/CMakeLists.txt ]; then
+            URL=$(python3 -c "import json;c=json.load(open('external/config.json'));print(c.get('repo_parent','https://github.com/cocos2d/')+c.get('repo_name','cocos2d-x-3rd-party-libs-bin')+'/archive/'+c['version']+'.zip')")
+            echo $URL
+            curl -L -o /tmp/deps.zip "$URL"
+            mkdir -p /tmp/deps
+            unzip -q /tmp/deps.zip -d /tmp/deps
+            cp -r /tmp/deps/*/* external/
+          fi
+          ls external
+          test -f external/CMakeLists.txt
+      - name: Criar projeto copiando o template
+        run: |
+          mkdir -p $HOME/proj
+          cp -r $HOME/cocos2d-x/templates/cpp-template-default $HOME/proj/MutantFridge
+          rsync -a --exclude='.git' --exclude='tests' --exclude='docs' $HOME/cocos2d-x/ $HOME/proj/MutantFridge/cocos2d/
+          find $HOME/proj/MutantFridge/cocos2d -iname "CocosBuilder.h"
+      - name: Juntar assets e codigo
+        run: |
+          echo "=== arquivos do repositorio ==="
+          find . -not -path './.git/*' -not -path './assets_parts/*' | head -40
+          cat assets_parts/assets.zip.part* > /tmp/assets.zip
+          unzip -q /tmp/assets.zip -d /tmp/a
+          cp -r /tmp/a/assets/* $HOME/proj/MutantFridge/Resources/
+          APP=$(find . -iname 'AppDelegate.cpp' -not -path './.git/*' | head -1)
+          echo "AppDelegate encontrado em: $APP"
+          test -n "$APP"
+          cp "$APP" $HOME/proj/MutantFridge/Classes/AppDelegate.cpp
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '11' }
+      - name: Deixar so o CMake 3.10.2
+        run: |
+          sudo find $ANDROID_SDK_ROOT/cmake -mindepth 1 -maxdepth 1 ! -name '3.10.2*' -exec rm -rf {} +
+          ls $ANDROID_SDK_ROOT/cmake
+      - name: Compilar APK
+        run: |
+          cd $HOME/proj/MutantFridge/proj.android
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/21.4.7075529" >> local.properties
+          sed -i 's/^PROP_APP_ABI=.*/PROP_APP_ABI=arm64-v8a/; s/^PROP_TARGET_SDK_VERSION=.*/PROP_TARGET_SDK_VERSION=30/; s/^PROP_MIN_SDK_VERSION=.*/PROP_MIN_SDK_VERSION=21/' gradle.properties
+          cat gradle.properties
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mutant-fridge-apk
+          path: ~/proj/MutantFridge/proj.android/app/build/outputs/apk/debug/*.apk

@@ -50,7 +50,10 @@ jobs:
           echo "AppDelegate encontrado em: $APP"
           test -n "$APP"
           cp "$APP" $HOME/proj/MutantFridge/Classes/AppDelegate.cpp
-          grep -c "stage1-bg" $HOME/proj/MutantFridge/Classes/AppDelegate.cpp || true
+      - name: Converter plists
+        run: |
+          python3 -c "import plistlib,glob;fs=glob.glob('$HOME/proj/MutantFridge/Resources/data/*.plist');ds=[(f,plistlib.dumps(plistlib.load(open(f,'rb')),fmt=plistlib.FMT_XML)) for f in fs];[open(f,'wb').write(d) for f,d in ds];print('plists convertidos:',len(fs))"
+          head -c 120 $HOME/proj/MutantFridge/Resources/data/mfm-game-stage1-bg.plist
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '11' }
       - name: Deixar so o CMake 3.10.2

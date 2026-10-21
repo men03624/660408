@@ -24,13 +24,11 @@ jobs:
           sudo apt-get install -y -qq python2 || true
           (python2 download-deps.py -r yes) || echo "python2 falhou"
           if [ ! -f external/CMakeLists.txt ]; then
-            echo "Baixando dependencias direto"
             URL=$(python3 -c "import json;c=json.load(open('external/config.json'));print(c.get('repo_parent','https://github.com/cocos2d/')+c.get('repo_name','cocos2d-x-3rd-party-libs-bin')+'/archive/'+c['version']+'.zip')")
             echo $URL
             curl -L -o /tmp/deps.zip "$URL"
             mkdir -p /tmp/deps
             unzip -q /tmp/deps.zip -d /tmp/deps
-            ls /tmp/deps
             cp -r /tmp/deps/*/* external/
           fi
           ls external
@@ -40,52 +38,29 @@ jobs:
           mkdir -p $HOME/proj
           cp -r $HOME/cocos2d-x/templates/cpp-template-default $HOME/proj/MutantFridge
           rsync -a --exclude='.git' --exclude='tests' --exclude='docs' $HOME/cocos2d-x/ $HOME/proj/MutantFridge/cocos2d/
-          ls $HOME/proj/MutantFridge/cocos2d/cocos/editor-support
           find $HOME/proj/MutantFridge/cocos2d -iname "CocosBuilder.h"
       - name: Juntar assets e codigo
         run: |
           cat assets_parts/assets.zip.part* > /tmp/assets.zip
           unzip -q /tmp/assets.zip -d /tmp/a
           cp -r /tmp/a/assets/* $HOME/proj/MutantFridge/Resources/
-          cat > $HOME/proj/MutantFridge/Classes/AppDelegate.cpp <<'EOF'
-          #include "AppDelegate.h"
-          #include "cocos2d.h"
-          #if __has_include("editor-support/cocosbuilder/CocosBuilder.h")
-          #include "editor-support/cocosbuilder/CocosBuilder.h"
-          #define HAVE_CCB 1
-          #endif
-          USING_NS_CC;
-          AppDelegate::AppDelegate() {}
-          AppDelegate::~AppDelegate() {}
-          void AppDelegate::initGLContextAttrs() {
-              GLContextAttrs glContextAttrs = {8, 8, 8, 8, 24, 8, 0};
-              GLView::setGLContextAttrs(glContextAttrs);
-          }
-          bool AppDelegate::applicationDidFinishLaunching() {
-              auto director = Director::getInstance();
-              auto glview = director->getOpenGLView();
-              if (!glview) { glview = GLViewImpl::create("Mutant Fridge Mayhem"); director->setOpenGLView(glview); }
-              glview->setDesignResolutionSize(480, 320, ResolutionPolicy::FIXED_HEIGHT);
-              FileUtils::getInstance()->addSearchPath("data");
-              FileUtils::getInstance()->addSearchPath("textures");
-              auto scene = Scene::create();
-              bool ok = false;
-          #ifdef HAVE_CCB
-              {
-                  using namespace cocosbuilder;
-                  NodeLoaderLibrary* lib = NodeLoaderLibrary::newDefaultNodeLoaderLibrary();
-                  CCBReader* reader = new CCBReader(lib);
-                  Node* menu = reader->readNodeGraphFromFile("GameMainMenu.ccbi");
-                  if (menu) { scene->addChild(menu); ok = true; }
-              }
-          #endif
-              if (!ok) { scene->addChild(Label::createWithSystemFont("Mutant Fridge Mayhem", "Arial", 24)); }
-              director->runWithScene(scene);
-              return true;
-          }
-          void AppDelegate::applicationDidEnterBackground() { Director::getInstance()->stopAnimation(); }
-          void AppDelegate::applicationWillEnterForeground() { Director::getInstance()->startAnimation(); }
-          EOF
+          cp Classes/AppDelegate.cpp $HOME/proj/MutantFridge/Classes/AppDelegate.cpp
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '11' }
       - name: Deixar so o CMake 3.10.2
+        run: |
+          sudo find $ANDROID_SDK_ROOT/cmake -mindepth 1 -maxdepth 1 ! -name '3.10.2*' -exec rm -rf {} +
+          ls $ANDROID_SDK_ROOT/cmake
+      - name: Compilar APK
+        run: |
+          cd $HOME/proj/MutantFridge/proj.android
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/21.4.7075529" >> local.properties
+          sed -i 's/^PROP_APP_ABI=.*/PROP_APP_ABI=arm64-v8a/; s/^PROP_TARGET_SDK_VERSION=.*/PROP_TARGET_SDK_VERSION=30/; s/^PROP_MIN_SDK_VERSION=.*/PROP_MIN_SDK_VERSION=21/' gradle.properties
+          cat gradle.properties
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mutant-fridge-apk
+          path: ~/proj/MutantFridge/proj.android/app/build/outputs/apk/debug/*.apk

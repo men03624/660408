@@ -40,7 +40,8 @@ jobs:
           mkdir -p $HOME/proj
           cp -r $HOME/cocos2d-x/templates/cpp-template-default $HOME/proj/MutantFridge
           rsync -a --exclude='.git' --exclude='tests' --exclude='docs' $HOME/cocos2d-x/ $HOME/proj/MutantFridge/cocos2d/
-          ls $HOME/proj/MutantFridge $HOME/proj/MutantFridge/proj.android
+          ls $HOME/proj/MutantFridge/cocos2d/cocos/editor-support
+          find $HOME/proj/MutantFridge/cocos2d -iname "CocosBuilder.h"
       - name: Juntar assets e codigo
         run: |
           cat assets_parts/assets.zip.part* > /tmp/assets.zip
@@ -49,9 +50,11 @@ jobs:
           cat > $HOME/proj/MutantFridge/Classes/AppDelegate.cpp <<'EOF'
           #include "AppDelegate.h"
           #include "cocos2d.h"
+          #if __has_include("editor-support/cocosbuilder/CocosBuilder.h")
           #include "editor-support/cocosbuilder/CocosBuilder.h"
+          #define HAVE_CCB 1
+          #endif
           USING_NS_CC;
-          using namespace cocosbuilder;
           AppDelegate::AppDelegate() {}
           AppDelegate::~AppDelegate() {}
           void AppDelegate::initGLContextAttrs() {
@@ -66,11 +69,17 @@ jobs:
               FileUtils::getInstance()->addSearchPath("data");
               FileUtils::getInstance()->addSearchPath("textures");
               auto scene = Scene::create();
-              NodeLoaderLibrary* lib = NodeLoaderLibrary::newDefaultNodeLoaderLibrary();
-              CCBReader* reader = new CCBReader(lib);
-              Node* menu = reader->readNodeGraphFromFile("GameMainMenu.ccbi");
-              if (menu) { scene->addChild(menu); }
-              else { scene->addChild(Label::createWithSystemFont("Mutant Fridge Mayhem", "Arial", 24)); }
+              bool ok = false;
+          #ifdef HAVE_CCB
+              {
+                  using namespace cocosbuilder;
+                  NodeLoaderLibrary* lib = NodeLoaderLibrary::newDefaultNodeLoaderLibrary();
+                  CCBReader* reader = new CCBReader(lib);
+                  Node* menu = reader->readNodeGraphFromFile("GameMainMenu.ccbi");
+                  if (menu) { scene->addChild(menu); ok = true; }
+              }
+          #endif
+              if (!ok) { scene->addChild(Label::createWithSystemFont("Mutant Fridge Mayhem", "Arial", 24)); }
               director->runWithScene(scene);
               return true;
           }
@@ -83,15 +92,6 @@ jobs:
         run: |
           sudo find $ANDROID_SDK_ROOT/cmake -mindepth 1 -maxdepth 1 ! -name '3.10.2*' -exec rm -rf {} +
           ls $ANDROID_SDK_ROOT/cmake
-      - name: Diagnostico CMake
-        run: |
-          NDK=$ANDROID_SDK_ROOT/ndk/21.4.7075529
-          CM=$(ls -d $ANDROID_SDK_ROOT/cmake/3.10.2*)/bin
-          $CM/cmake -H$HOME/proj/MutantFridge -B/tmp/cmb -G Ninja -DANDROID_ABI=armeabi-v7a -DANDROID_PLATFORM=android-16 -DANDROID_NDK=$NDK -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDROID_STL=c++_static -DANDROID_TOOLCHAIN=clang -DANDROID_ARM_NEON=TRUE -DCMAKE_BUILD_TYPE=Debug > /tmp/cmake.txt 2>&1 || true
-          echo "===== ERROS DO CMAKE ====="
-          grep -n -B1 -A8 "CMake Error" /tmp/cmake.txt | head -50
-          echo "===== FIM DO LOG ====="
-          tail -8 /tmp/cmake.txt
       - name: Compilar APK
         run: |
           cd $HOME/proj/MutantFridge/proj.android

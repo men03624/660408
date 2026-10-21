@@ -1,6 +1,280 @@
 #include "AppDelegate.h"
 #include "cocos2d.h"
+#include <vector>
+#include <algorithm>
+#include <cmath>
 USING_NS_CC;
+
+typedef std::vector<SpriteFrame*> Frames;
+
+static SpriteFrame* frm(const std::string& n) { return SpriteFrameCache::getInstance()->getSpriteFrameByName(n); }
+static Frames seq(const char* fmt, int a, int b) {
+    Frames v;
+    for (int i = a; i <= b; i++) { auto f = frm(StringUtils::format(fmt, i)); if (f) v.push_back(f); }
+    return v;
+}
+static SpriteFrame* pick(const Frames& v, float t, bool loop) {
+    if (v.empty()) return nullptr;
+    int n = (int)v.size(), i = (int)(t * 14);
+    i = loop ? i % n : std::min(n - 1, i);
+    return v[i];
+}
+static void setF(Sprite* s, SpriteFrame* f) {
+    if (f) { s->setSpriteFrame(f); s->setVisible(true); } else s->setVisible(false);
+}
+
+struct Enemy {
+    Node* n; Sprite *legs, *armL, *body, *head, *armR;
+    float x, y, t, hp, hurt, sp;
+    int st, f; bool did;   // st: 0 corre, 1 ataca, 2 morto
+};
+
+class GameLayer : public Layer {
+public:
+    CREATE_FUNC(GameLayer);
+    bool init() override;
+    void update(float dt) override;
+private:
+    void attack();
+    void spawnEnemy();
+    void resetGame();
+    void render();
+    float cx = 0, xmin = 0, xmax = 0;
+    Size vs; Vec2 org;
+    Node* pn = nullptr; Sprite *pBody = nullptr, *pL = nullptr, *pR = nullptr;
+    float px = 200, py = 70, pt = 0, pinv = 0, plastAtk = -9, T = 0, spawnT = 1, deadT = 0;
+    int pf = 1, pst = 0, cb = 0, hp = 100, score = 0, best = 0, wave = 1;
+    bool phit = false, over = false;
+    Frames idle, idleA, run, runL, runR, ch[3], death, legs, atkL, atkH;
+    std::vector<Enemy> E;
+    Vec2 joyO, joyV; int joyId = -1;
+    DrawNode* hud = nullptr; Label *lbl = nullptr, *lblBtn = nullptr, *lblOver = nullptr;
+};
+
+bool GameLayer::init() {
+    if (!Layer::init()) return false;
+    auto d = Director::getInstance();
+    vs = d->getVisibleSize(); org = d->getVisibleOrigin();
+    cx = org.x + vs.width / 2;
+    auto cache = SpriteFrameCache::getInstance();
+    cache->addSpriteFramesWithFile("data/mfm-game-stage1-bg.plist", "textures/mfm-game-stage1-bg.png");
+    cache->addSpriteFramesWithFile("data/mfm-game-gumball-sprites.plist", "textures/mfm-game-gumball-sprites.png");
+    cache->addSpriteFramesWithFile("data/mfm-game-npcbreadman-sprites.plist", "textures/mfm-game-npcbreadman-sprites.png");
+
+    auto bgf = frm("stages_c1_mainbg.png");
+    float bgW = vs.width * 0.7f;
+    if (bgf) {
+        auto bg = Sprite::createWithSpriteFrame(bgf);
+        float s = vs.height / bg->getContentSize().height;
+        bg->setScale(s);
+        bg->setPosition(cx, org.y + vs.height / 2);
+        addChild(bg, -5000);
+        bgW = bg->getContentSize().width * s;
+    }
+    xmin = cx - bgW / 2 + 40; xmax = cx + bgW / 2 - 40;
+    px = cx;
+
+    idle = seq("char_gumball_idle_%03d.png", 0, 7);
+    idleA = seq("char_gumball_idle_arms_%03d.png", 0, 7);
+    run = seq("char_gumball_run_%03d.png", 0, 9);
+    runL = seq("char_gumball_run_larm_%03d.png", 0, 9);
+    runR = seq("char_gumball_run_rarm_%03d.png", 0, 9);
+    ch[0] = seq("char_gumball_chop1_%03d.png", 0, 3);
+    ch[1] = seq("char_gumball_chop2_%03d.png", 0, 3);
+    ch[2] = seq("char_gumball_chop3_%03d.png", 0, 7);
+    death = seq("char_gumball_death_%03d.png", 0, 6);
+    legs = seq("npc_breadman_run_legs_%03d.png", 0, 8);
+    atkL = seq("npc_breadman_attack_legs%d.png", 1, 2);
+    atkH = seq("npc_breadman_attack_headarms_%03d.png", 0, 5);
+
+    pn = Node::create(); pn->setCascadeOpacityEnabled(true);
+    pL = Sprite::create(); pBody = Sprite::create(); pR = Sprite::create();
+    pn->addChild(pL); pn->addChild(pBody); pn->addChild(pR);
+    addChild(pn);
+
+    hud = DrawNode::create(); addChild(hud, 5000);
+    lbl = Label::createWithSystemFont("", "Arial", 16);
+    lbl->setAnchorPoint(Vec2(1, 1)); lbl->setPosition(org.x + vs.width - 10, org.y + vs.height - 8);
+    addChild(lbl, 5001);
+    lblBtn = Label::createWithSystemFont("Atacar", "Arial", 14);
+    lblBtn->setPosition(org.x + vs.width - 60, org.y + 60);
+    addChild(lblBtn, 5001);
+    lblOver = Label::createWithSystemFont("", "Arial", 22);
+    lblOver->setPosition(cx, org.y + vs.height / 2);
+    addChild(lblOver, 5002);
+
+    auto l = EventListenerTouchAllAtOnce::create();
+    l->onTouchesBegan = [this](const std::vector<Touch*>& ts, Event*) {
+        for (auto t : ts) {
+            Vec2 p = t->getLocation();
+            if (p.x > cx) attack();
+            else if (joyId < 0) { joyId = t->getID(); joyO = p; joyV = Vec2::ZERO; }
+        }
+    };
+    l->onTouchesMoved = [this](const std::vector<Touch*>& ts, Event*) {
+        for (auto t : ts) if (t->getID() == joyId) {
+            Vec2 v = (t->getLocation() - joyO) / 40.f;
+            if (v.length() > 1.f) v.normalize();
+            joyV = v;
+        }
+    };
+    auto endFn = [this](const std::vector<Touch*>& ts, Event*) {
+        for (auto t : ts) if (t->getID() == joyId) { joyId = -1; joyV = Vec2::ZERO; }
+    };
+    l->onTouchesEnded = endFn;
+    l->onTouchesCancelled = endFn;
+    _eventDispatcher->addEventListenerWithSceneGraphPriority(l, this);
+    resetGame();
+    scheduleUpdate();
+    return true;
+}
+
+void GameLayer::resetGame() {
+    for (auto& e : E) e.n->removeFromParent();
+    E.clear();
+    px = cx; py = 70; pf = 1; pst = 0; pt = 0; hp = 100; score = 0; wave = 1;
+    pinv = 0; plastAtk = -9; cb = 0; spawnT = 1; over = false;
+}
+
+void GameLayer::attack() {
+    if (over) { if (T - deadT > 1.f) resetGame(); return; }
+    if (pst == 2 || pst == 3) return;
+    cb = (T - plastAtk < .7f) ? (cb % 3) + 1 : 1;
+    pst = 2; pt = 0; phit = false; plastAtk = T;
+}
+
+void GameLayer::spawnEnemy() {
+    Enemy e;
+    e.n = Node::create(); e.n->setCascadeOpacityEnabled(true);
+    e.legs = Sprite::create(); e.armL = Sprite::create(); e.body = Sprite::create();
+    e.head = Sprite::create(); e.armR = Sprite::create();
+    e.n->addChild(e.legs); e.n->addChild(e.armL); e.n->addChild(e.body);
+    e.n->addChild(e.head); e.n->addChild(e.armR);
+    addChild(e.n);
+    e.x = (rand() % 2) ? xmax + 25 : xmin - 25;
+    e.y = 25 + rand() % 105;
+    e.hp = 3; e.st = 0; e.t = 0; e.hurt = 0; e.f = 1; e.did = false;
+    e.sp = 35 + rand() % 15 + wave * 3;
+    E.push_back(e);
+}
+
+void GameLayer::update(float dt) {
+    if (dt > .05f) dt = .05f;
+    T += dt;
+    if (!over) {
+        Vec2 m = joyV;
+        pt += dt;
+        if (pinv > 0) pinv -= dt;
+        if (pst == 2) {
+            const Frames& a = ch[cb - 1];
+            float len = a.size() / 14.f;
+            if (!phit && pt > len * .5f) {
+                phit = true;
+                float r = (cb == 3) ? 95.f : 75.f;
+                for (auto& e : E) {
+                    if (e.st != 2 && fabsf(e.y - py) < 35 && (e.x - px) * pf > -10 && fabsf(e.x - px) < r) {
+                        e.hp -= (cb == 3) ? 2 : 1; e.hurt = .25f; e.x += pf * ((cb == 3) ? 40 : 14); score += 5;
+                        if (e.hp <= 0) { e.st = 2; e.t = 0; score += 10; }
+                    }
+                }
+            }
+            if (pt >= len) { pst = 0; pt = 0; }
+        } else if (pst == 3) {
+            if (pt > .3f) { pst = 0; pt = 0; }
+        } else {
+            if (m.length() > .15f) {
+                px += m.x * 110 * dt; py += m.y * 80 * dt;
+                if (fabsf(m.x) > .2f) pf = (m.x > 0) ? 1 : -1;
+                pst = 1;
+            } else pst = 0;
+        }
+        px = std::max(xmin, std::min(xmax, px));
+        py = std::max(20.f, std::min(130.f, py));
+
+        spawnT -= dt;
+        int alive = 0;
+        for (auto& e : E) if (e.st != 2) alive++;
+        if (spawnT <= 0 && alive < 2 + wave) { spawnT = std::max(1.2f, 3.2f - wave * .2f); spawnEnemy(); }
+        if (score >= wave * 80) wave++;
+
+        for (auto& e : E) {
+            e.t += dt;
+            if (e.hurt > 0) e.hurt -= dt;
+            if (e.st == 2) continue;
+            float dx = px - e.x, dy = py - e.y;
+            e.f = (dx > 0) ? 1 : -1;
+            if (e.st == 0) {
+                if (e.hurt <= 0) {
+                    float dist = sqrtf(dx * dx + dy * dy);
+                    if (fabsf(dx) < 62 && fabsf(dy) < 22) { e.st = 1; e.t = 0; e.did = false; }
+                    else if (dist > .1f) { e.x += dx / dist * e.sp * dt; e.y += dy / dist * e.sp * .7f * dt; }
+                }
+            } else if (e.st == 1) {
+                if (!e.did && e.t > .4f) {
+                    e.did = true;
+                    if (fabsf(px - e.x) < 75 && fabsf(py - e.y) < 30 && pinv <= 0) {
+                        hp -= 12; pinv = .6f; pst = 3; pt = 0;
+                        if (hp <= 0) { over = true; deadT = T; pst = 4; pt = 0; if (score > best) best = score; }
+                    }
+                }
+                if (e.t > .8f) { e.st = 0; e.t = 0; }
+            }
+        }
+        for (size_t i = 0; i < E.size();) {
+            if (E[i].st == 2 && E[i].t > 1.2f) { E[i].n->removeFromParent(); E.erase(E.begin() + i); }
+            else i++;
+        }
+    } else pt += dt;
+    render();
+}
+
+void GameLayer::render() {
+    const float S = .8f, SE = .5f;
+    pn->setPosition(px, py + 70 * S);
+    pn->setScaleX(pf * S); pn->setScaleY(S);
+    pn->setLocalZOrder(1000 - (int)py);
+    pn->setOpacity((pinv > 0 && ((int)(T * 20) % 2)) ? 120 : 255);
+    if (pst == 2) { setF(pBody, pick(ch[cb - 1], pt, false)); pL->setVisible(false); pR->setVisible(false); }
+    else if (pst == 1) { setF(pL, pick(runL, pt, true)); setF(pBody, pick(run, pt, true)); setF(pR, pick(runR, pt, true)); }
+    else if (pst == 4) { setF(pBody, pick(death, pt, false)); pL->setVisible(false); pR->setVisible(false); }
+    else if (pst == 3) { setF(pBody, frm("char_gumball_hit1.png")); pL->setVisible(false); pR->setVisible(false); }
+    else { pL->setVisible(false); setF(pBody, pick(idle, pt, true)); setF(pR, pick(idleA, pt, true)); }
+
+    for (auto& e : E) {
+        e.n->setPosition(e.x, e.y + 62 * SE);
+        e.n->setScaleX(e.f * SE); e.n->setScaleY(SE);
+        e.n->setLocalZOrder(1000 - (int)e.y);
+        if (e.st == 2) {
+            e.n->setOpacity((GLubyte)(255 * std::max(0.f, 1.f - e.t / 1.2f)));
+            e.legs->setVisible(false); e.armL->setVisible(false); e.head->setVisible(false); e.armR->setVisible(false);
+            setF(e.body, frm("npc_breadman_death.png"));
+        } else if (e.st == 1) {
+            e.n->setOpacity(255);
+            setF(e.legs, pick(atkL, e.t, false)); e.armL->setVisible(false);
+            setF(e.body, frm("npc_breadman_body1.png"));
+            setF(e.head, pick(atkH, e.t, false)); e.armR->setVisible(false);
+        } else {
+            e.n->setOpacity(255);
+            setF(e.legs, pick(legs, e.t, true)); setF(e.armL, frm("npc_breadman_run_l_arm.png"));
+            setF(e.body, frm("npc_breadman_body1.png")); setF(e.head, frm("npc_breadman_run_head.png"));
+            setF(e.armR, frm("npc_breadman_run_r_arm.png"));
+        }
+    }
+
+    hud->clear();
+    float bx = org.x + 10, by = org.y + vs.height - 22;
+    hud->drawSolidRect(Vec2(bx, by), Vec2(bx + 124, by + 12), Color4F(0, 0, 0, .55f));
+    hud->drawSolidRect(Vec2(bx + 2, by + 2), Vec2(bx + 2 + 120 * std::max(0, hp) / 100.f, by + 10),
+                       hp > 30 ? Color4F(.37f, .81f, .37f, 1) : Color4F(.9f, .28f, .24f, 1));
+    hud->drawSolidCircle(Vec2(org.x + vs.width - 60, org.y + 60), 34, 0, 24, Color4F(1, 1, 1, .2f));
+    if (joyId >= 0) {
+        hud->drawCircle(joyO, 34, 0, 24, false, Color4F(1, 1, 1, .4f));
+        hud->drawSolidCircle(joyO + joyV * 30, 14, 0, 16, Color4F(1, 1, 1, .5f));
+    }
+    lbl->setString(StringUtils::format("Pontos %d  Onda %d", score, wave));
+    if (over) lblOver->setString(StringUtils::format("Fim de jogo\nPontos %d  Recorde %d\nToque em Atacar", score, best));
+    else lblOver->setString("");
+}
 
 AppDelegate::AppDelegate() {}
 AppDelegate::~AppDelegate() {}
@@ -10,69 +284,13 @@ void AppDelegate::initGLContextAttrs() {
     GLView::setGLContextAttrs(glContextAttrs);
 }
 
-static Vector<SpriteFrame*> framesOf(const char* fmt, int n) {
-    Vector<SpriteFrame*> v;
-    auto cache = SpriteFrameCache::getInstance();
-    for (int i = 0; i < n; i++) {
-        auto f = cache->getSpriteFrameByName(StringUtils::format(fmt, i));
-        if (f) v.pushBack(f);
-    }
-    return v;
-}
-
 bool AppDelegate::applicationDidFinishLaunching() {
     auto director = Director::getInstance();
     auto glview = director->getOpenGLView();
     if (!glview) { glview = GLViewImpl::create("Mutant Fridge Mayhem"); director->setOpenGLView(glview); }
     glview->setDesignResolutionSize(480, 320, ResolutionPolicy::FIXED_HEIGHT);
-
-    auto fu = FileUtils::getInstance();
     auto scene = Scene::create();
-    auto vs = director->getVisibleSize();
-    auto org = director->getVisibleOrigin();
-    auto cache = SpriteFrameCache::getInstance();
-
-    std::string dbg = StringUtils::format(
-        "HelloWorld.png: %d\nplist em data/: %d\npng em textures/: %d\nplist na raiz: %d\nccbi em data/: %d\nGumball plist em data/: %d",
-        (int)fu->isFileExist("HelloWorld.png"),
-        (int)fu->isFileExist("data/mfm-game-stage1-bg.plist"),
-        (int)fu->isFileExist("textures/mfm-game-stage1-bg.png"),
-        (int)fu->isFileExist("mfm-game-stage1-bg.plist"),
-        (int)fu->isFileExist("data/GameMainMenu.ccbi"),
-        (int)fu->isFileExist("data/mfm-game-gumball-sprites.plist"));
-
-    cache->addSpriteFramesWithFile("data/mfm-game-stage1-bg.plist", "textures/mfm-game-stage1-bg.png");
-    auto bgf = cache->getSpriteFrameByName("stages_c1_mainbg.png");
-    if (bgf) {
-        auto bg = Sprite::createWithSpriteFrame(bgf);
-        bg->setScale(vs.height / bg->getContentSize().height);
-        bg->setPosition(org.x + vs.width / 2, org.y + vs.height / 2);
-        scene->addChild(bg);
-        dbg += "\nFUNDO: OK";
-    } else { dbg += "\nFUNDO: FALHOU"; }
-
-    cache->addSpriteFramesWithFile("data/mfm-game-gumball-sprites.plist", "textures/mfm-game-gumball-sprites.png");
-    auto body = framesOf("char_gumball_idle_%03d.png", 8);
-    auto arms = framesOf("char_gumball_idle_arms_%03d.png", 8);
-    if (!body.empty()) {
-        auto g = Sprite::createWithSpriteFrame(body.at(0));
-        g->setPosition(org.x + vs.width / 2, org.y + vs.height * 0.4f);
-        g->runAction(RepeatForever::create(Animate::create(Animation::createWithSpriteFrames(body, 0.07f))));
-        scene->addChild(g, 1);
-        if (!arms.empty()) {
-            auto a = Sprite::createWithSpriteFrame(arms.at(0));
-            a->setPosition(g->getPosition());
-            a->runAction(RepeatForever::create(Animate::create(Animation::createWithSpriteFrames(arms, 0.07f))));
-            scene->addChild(a, 2);
-        }
-        dbg += StringUtils::format("\nGUMBALL: OK (%d quadros)", (int)body.size());
-    } else { dbg += "\nGUMBALL: FALHOU"; }
-
-    auto label = Label::createWithSystemFont(dbg, "Arial", 11);
-    label->setAnchorPoint(Vec2(0, 1));
-    label->setPosition(org.x + 8, org.y + vs.height - 6);
-    scene->addChild(label, 10);
-
+    scene->addChild(GameLayer::create());
     director->runWithScene(scene);
     return true;
 }

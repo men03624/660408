@@ -71,6 +71,12 @@ jobs:
           ls $ANDROID_SDK_ROOT/cmake
           sudo find $ANDROID_SDK_ROOT/cmake -mindepth 1 -maxdepth 1 ! -name '3.10.2*' -exec rm -rf {} +
           ls $ANDROID_SDK_ROOT/cmake
+      - name: Diagnostico CMake
+        run: |
+          NDK=$ANDROID_SDK_ROOT/ndk/21.4.7075529
+          CM=$(ls -d $ANDROID_SDK_ROOT/cmake/3.10.2*)/bin
+          export PATH=$CM:$PATH
+          $CM/cmake -H$HOME/proj/MutantFridge -B/tmp/cmb -G Ninja -DANDROID_ABI=armeabi-v7a -DANDROID_PLATFORM=android-16 -DANDROID_NDK=$NDK -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDROID_STL=c++_static -DANDROID_TOOLCHAIN=clang -DANDROID_ARM_NEON=TRUE -DCMAKE_BUILD_TYPE=Debug 2>&1 | grep -v "^-- " | tail -40 || true
       - name: Compilar APK
         run: |
           cd $HOME/proj/MutantFridge/proj.android

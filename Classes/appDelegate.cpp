@@ -1,12 +1,16 @@
 #include "AppDelegate.h"
 #include "cocos2d.h"
+#include "audio/include/AudioEngine.h"
 #include <vector>
 #include <algorithm>
 #include <cmath>
 USING_NS_CC;
+namespace cocos2d { namespace experimental {} }
+using namespace cocos2d::experimental;
 
 typedef std::vector<SpriteFrame*> Frames;
 
+static void sfx(const std::string& f, float v = .7f) { AudioEngine::play2d(f, false, v); }
 static SpriteFrame* frm(const std::string& n) { return SpriteFrameCache::getInstance()->getSpriteFrameByName(n); }
 static Frames seq(const char* fmt, int a, int b) {
     Frames v;
@@ -62,16 +66,18 @@ bool GameLayer::init() {
     cache->addSpriteFramesWithFile("data/mfm-game-npcbreadman-sprites.plist", "textures/mfm-game-npcbreadman-sprites.png");
 
     auto bgf = frm("stages_c1_mainbg.png");
-    float bgW = vs.width * 0.7f;
     if (bgf) {
-        auto bg = Sprite::createWithSpriteFrame(bgf);
-        float s = vs.height / bg->getContentSize().height;
-        bg->setScale(s);
-        bg->setPosition(cx, org.y + vs.height / 2);
-        addChild(bg, -5000);
-        bgW = bg->getContentSize().width * s;
+        for (int k = -2; k <= 2; k++) {
+            auto bg = Sprite::createWithSpriteFrame(bgf);
+            float s = vs.height / bg->getContentSize().height;
+            float w = bg->getContentSize().width * s;
+            bg->setScaleY(s);
+            bg->setScaleX((k & 1) ? -s : s);
+            bg->setPosition(cx + k * w, org.y + vs.height / 2);
+            addChild(bg, -5000);
+        }
     }
-    xmin = cx - bgW / 2 + 40; xmax = cx + bgW / 2 - 40;
+    xmin = org.x + 40; xmax = org.x + vs.width - 40;
     px = cx;
 
     idle = seq("char_gumball_idle_%03d.png", 0, 7);
@@ -84,7 +90,6 @@ bool GameLayer::init() {
     ch[2] = seq("char_gumball_chop3_%03d.png", 0, 7);
     death = seq("char_gumball_death_%03d.png", 0, 6);
     legs = seq("npc_breadman_run_legs_%03d.png", 0, 8);
-    atkL = seq("npc_breadman_attack_legs%d.png", 1, 2);
     atkH = seq("npc_breadman_attack_headarms_%03d.png", 0, 5);
 
     pn = Node::create(); pn->setCascadeOpacityEnabled(true);
@@ -125,6 +130,7 @@ bool GameLayer::init() {
     l->onTouchesCancelled = endFn;
     _eventDispatcher->addEventListenerWithSceneGraphPriority(l, this);
     resetGame();
+    AudioEngine::play2d("audio/music_chapter1.mp3", true, 0.4f);
     scheduleUpdate();
     return true;
 }
@@ -141,6 +147,7 @@ void GameLayer::attack() {
     if (pst == 2 || pst == 3) return;
     cb = (T - plastAtk < .7f) ? (cb % 3) + 1 : 1;
     pst = 2; pt = 0; phit = false; plastAtk = T;
+    sfx("audio/sfx_char_gumball_chop.ogg", .6f);
 }
 
 void GameLayer::spawnEnemy() {
@@ -174,7 +181,8 @@ void GameLayer::update(float dt) {
                 for (auto& e : E) {
                     if (e.st != 2 && fabsf(e.y - py) < 35 && (e.x - px) * pf > -10 && fabsf(e.x - px) < r) {
                         e.hp -= (cb == 3) ? 2 : 1; e.hurt = .25f; e.x += pf * ((cb == 3) ? 40 : 14); score += 5;
-                        if (e.hp <= 0) { e.st = 2; e.t = 0; score += 10; }
+                        sfx(cb == 3 ? "audio/sfx_char_criticalhit.ogg" : "audio/sfx_char_impactnormal.ogg", .7f);
+                        if (e.hp <= 0) { e.st = 2; e.t = 0; score += 10; sfx("audio/sfx_npc_breadman_death.ogg", .7f); }
                     }
                 }
             }
@@ -206,18 +214,23 @@ void GameLayer::update(float dt) {
             if (e.st == 0) {
                 if (e.hurt <= 0) {
                     float dist = sqrtf(dx * dx + dy * dy);
-                    if (fabsf(dx) < 62 && fabsf(dy) < 22) { e.st = 1; e.t = 0; e.did = false; }
+                    if (fabsf(dx) < 62 && fabsf(dy) < 22) { e.st = 1; e.t = 0; e.did = false; sfx("audio/sfx_npc_breadman_attack.ogg", .5f); }
                     else if (dist > .1f) { e.x += dx / dist * e.sp * dt; e.y += dy / dist * e.sp * .7f * dt; }
                 }
             } else if (e.st == 1) {
-                if (!e.did && e.t > .4f) {
+                if (!e.did && e.t > .36f) {
                     e.did = true;
                     if (fabsf(px - e.x) < 75 && fabsf(py - e.y) < 30 && pinv <= 0) {
                         hp -= 12; pinv = .6f; pst = 3; pt = 0;
-                        if (hp <= 0) { over = true; deadT = T; pst = 4; pt = 0; if (score > best) best = score; }
+                        if (hp <= 0) {
+                            over = true; deadT = T; pst = 4; pt = 0; if (score > best) best = score;
+                            sfx("audio/sfx_char_gumball_faint.ogg", .8f);
+                        } else {
+                            sfx(StringUtils::format("audio/sfx_char_gumball_hurt%d.ogg", 1 + rand() % 4), .7f);
+                        }
                     }
                 }
-                if (e.t > .8f) { e.st = 0; e.t = 0; }
+                if (e.t > .65f) { e.st = 0; e.t = 0; }
             }
         }
         for (size_t i = 0; i < E.size();) {
@@ -250,9 +263,9 @@ void GameLayer::render() {
             setF(e.body, frm("npc_breadman_death.png"));
         } else if (e.st == 1) {
             e.n->setOpacity(255);
-            setF(e.legs, pick(atkL, e.t, false)); e.armL->setVisible(false);
-            setF(e.body, frm("npc_breadman_body1.png"));
-            setF(e.head, pick(atkH, e.t, false)); e.armR->setVisible(false);
+            setF(e.legs, frm(e.t < .3f ? "npc_breadman_attack_legs1.png" : "npc_breadman_attack_legs2.png"));
+            e.armL->setVisible(false); e.body->setVisible(false); e.armR->setVisible(false);
+            setF(e.head, pick(atkH, e.t, false));
         } else {
             e.n->setOpacity(255);
             setF(e.legs, pick(legs, e.t, true)); setF(e.armL, frm("npc_breadman_run_l_arm.png"));
@@ -295,5 +308,5 @@ bool AppDelegate::applicationDidFinishLaunching() {
     return true;
 }
 
-void AppDelegate::applicationDidEnterBackground() { Director::getInstance()->stopAnimation(); }
-void AppDelegate::applicationWillEnterForeground() { Director::getInstance()->startAnimation(); }
+void AppDelegate::applicationDidEnterBackground() { Director::getInstance()->stopAnimation(); AudioEngine::pauseAll(); }
+void AppDelegate::applicationWillEnterForeground() { Director::getInstance()->startAnimation(); AudioEngine::resumeAll(); }

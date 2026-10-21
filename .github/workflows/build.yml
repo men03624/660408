@@ -89,17 +89,3 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '11' }
       - name: Deixar so o CMake 3.10.2
-        run: |
-          sudo find $ANDROID_SDK_ROOT/cmake -mindepth 1 -maxdepth 1 ! -name '3.10.2*' -exec rm -rf {} +
-          ls $ANDROID_SDK_ROOT/cmake
-      - name: Compilar APK
-        run: |
-          cd $HOME/proj/MutantFridge/proj.android
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-          echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/21.4.7075529" >> local.properties
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
-      - uses: actions/upload-artifact@v4
-        with:
-          name: mutant-fridge-apk
-          path: ~/proj/MutantFridge/proj.android/app/build/outputs/apk/debug/*.apk

@@ -41,10 +41,15 @@ jobs:
           find $HOME/proj/MutantFridge/cocos2d -iname "CocosBuilder.h"
       - name: Juntar assets e codigo
         run: |
+          echo "=== arquivos do repositorio ==="
+          find . -not -path './.git/*' -not -path './assets_parts/*' | head -40
           cat assets_parts/assets.zip.part* > /tmp/assets.zip
           unzip -q /tmp/assets.zip -d /tmp/a
           cp -r /tmp/a/assets/* $HOME/proj/MutantFridge/Resources/
-          cp Classes/AppDelegate.cpp $HOME/proj/MutantFridge/Classes/AppDelegate.cpp
+          APP=$(find . -iname 'AppDelegate.cpp' -not -path './.git/*' | head -1)
+          echo "AppDelegate encontrado em: $APP"
+          test -n "$APP"
+          cp "$APP" $HOME/proj/MutantFridge/Classes/AppDelegate.cpp
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '11' }
       - name: Deixar so o CMake 3.10.2

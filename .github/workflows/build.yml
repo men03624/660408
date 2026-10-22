@@ -53,10 +53,12 @@ jobs:
       - name: Converter plists
         run: |
           python3 -c "import plistlib,glob;fs=glob.glob('$HOME/proj/MutantFridge/Resources/data/*.plist');ds=[(f,plistlib.dumps(plistlib.load(open(f,'rb')),fmt=plistlib.FMT_XML)) for f in fs];[open(f,'wb').write(d) for f,d in ds];print('plists convertidos:',len(fs))"
-      - name: Aplicar fundos limpos
+      - name: Aplicar assets 2x
         run: |
-          ls -la bgfix.zip
-          unzip -o bgfix.zip -d $HOME/proj/MutantFridge/Resources/textures
+          ls -la assets_ipa2x.zip
+          unzip -o assets_ipa2x.zip -d $HOME/proj/MutantFridge/Resources
+          sed -i 's/glview->setDesignResolutionSize(480, 320, ResolutionPolicy::FIXED_HEIGHT);/&\n    director->setContentScaleFactor(2.0f);/' $HOME/proj/MutantFridge/Classes/AppDelegate.cpp
+          grep -n "ContentScaleFactor" $HOME/proj/MutantFridge/Classes/AppDelegate.cpp
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '11' }
       - name: Deixar so o CMake 3.10.2

@@ -39,7 +39,7 @@ public:
     bool init() override;
     void update(float dt) override;
 private:
-    void attack();
+    void attack(bool charged);
     void spawnEnemy();
     void resetGame();
     void render();
@@ -48,11 +48,12 @@ private:
     Node* pn = nullptr; Sprite *pBody = nullptr, *pL = nullptr, *pR = nullptr;
     float px = 200, py = 70, pt = 0, pinv = 0, plastAtk = -9, T = 0, spawnT = 1, deadT = 0;
     int pf = 1, pst = 0, cb = 0, hp = 100, score = 0, best = 0, wave = 1;
-    bool phit = false, over = false;
+    bool phit = false, over = false, chg = false;
     Frames idle, idleA, run, runL, runR, ch[3], death, legs, atkL, atkH;
     std::vector<Enemy> E;
     Vec2 joyO, joyV; int joyId = -1;
-    DrawNode* hud = nullptr; Label *lbl = nullptr, *lblBtn = nullptr, *lblOver = nullptr;
+    int atkId = -1; float atkStart = 0;
+    DrawNode* hud = nullptr; Label *lbl = nullptr, *lblOver = nullptr;
 };
 
 bool GameLayer::init() {
@@ -67,15 +68,13 @@ bool GameLayer::init() {
 
     auto bgf = frm("stages_c1_mainbg.png");
     if (bgf) {
-        for (int k = -2; k <= 2; k++) {
-            auto bg = Sprite::createWithSpriteFrame(bgf);
-            float s = vs.height / bg->getContentSize().height;
-            float w = bg->getContentSize().width * s;
-            bg->setScaleY(s);
-            bg->setScaleX((k & 1) ? -s : s);
-            bg->setPosition(cx + k * w, org.y + vs.height / 2);
-            addChild(bg, -5000);
-        }
+        auto bg = Sprite::createWithSpriteFrame(bgf);
+        Size bs = bg->getContentSize();
+        float s = std::max(vs.width / bs.width, vs.height / bs.height);
+        bg->setScale(s);
+        bg->setAnchorPoint(Vec2(0.5f, 0.f));
+        bg->setPosition(cx, org.y);
+        addChild(bg, -5000);
     }
     xmin = org.x + 40; xmax = org.x + vs.width - 40;
     px = cx;
@@ -92,7 +91,7 @@ bool GameLayer::init() {
     legs = seq("npc_breadman_run_legs_%03d.png", 0, 8);
     atkH = seq("npc_breadman_attack_headarms_%03d.png", 0, 5);
 
-    pn = Node::create(); pn->setCascadeOpacityEnabled(true);
+    pn = Node::create(); pn->setCascadeOpacityEnabled(true); pn->setCascadeColorEnabled(true);
     pL = Sprite::create(); pBody = Sprite::create(); pR = Sprite::create();
     pn->addChild(pL); pn->addChild(pBody); pn->addChild(pR);
     addChild(pn);
@@ -101,9 +100,6 @@ bool GameLayer::init() {
     lbl = Label::createWithSystemFont("", "Arial", 16);
     lbl->setAnchorPoint(Vec2(1, 1)); lbl->setPosition(org.x + vs.width - 10, org.y + vs.height - 8);
     addChild(lbl, 5001);
-    lblBtn = Label::createWithSystemFont("Atacar", "Arial", 14);
-    lblBtn->setPosition(org.x + vs.width - 60, org.y + 60);
-    addChild(lblBtn, 5001);
     lblOver = Label::createWithSystemFont("", "Arial", 22);
     lblOver->setPosition(cx, org.y + vs.height / 2);
     addChild(lblOver, 5002);
@@ -112,7 +108,7 @@ bool GameLayer::init() {
     l->onTouchesBegan = [this](const std::vector<Touch*>& ts, Event*) {
         for (auto t : ts) {
             Vec2 p = t->getLocation();
-            if (p.x > cx) attack();
+            if (p.x > cx) { if (atkId < 0) { atkId = t->getID(); atkStart = T; } }
             else if (joyId < 0) { joyId = t->getID(); joyO = p; joyV = Vec2::ZERO; }
         }
     };
@@ -123,11 +119,18 @@ bool GameLayer::init() {
             joyV = v;
         }
     };
-    auto endFn = [this](const std::vector<Touch*>& ts, Event*) {
-        for (auto t : ts) if (t->getID() == joyId) { joyId = -1; joyV = Vec2::ZERO; }
+    l->onTouchesEnded = [this](const std::vector<Touch*>& ts, Event*) {
+        for (auto t : ts) {
+            if (t->getID() == joyId) { joyId = -1; joyV = Vec2::ZERO; }
+            if (t->getID() == atkId) { float hold = T - atkStart; atkId = -1; attack(hold >= .8f); }
+        }
     };
-    l->onTouchesEnded = endFn;
-    l->onTouchesCancelled = endFn;
+    l->onTouchesCancelled = [this](const std::vector<Touch*>& ts, Event*) {
+        for (auto t : ts) {
+            if (t->getID() == joyId) { joyId = -1; joyV = Vec2::ZERO; }
+            if (t->getID() == atkId) atkId = -1;
+        }
+    };
     _eventDispatcher->addEventListenerWithSceneGraphPriority(l, this);
     resetGame();
     AudioEngine::play2d("audio/music_chapter1.mp3", true, 0.4f);
@@ -139,13 +142,14 @@ void GameLayer::resetGame() {
     for (auto& e : E) e.n->removeFromParent();
     E.clear();
     px = cx; py = 70; pf = 1; pst = 0; pt = 0; hp = 100; score = 0; wave = 1;
-    pinv = 0; plastAtk = -9; cb = 0; spawnT = 1; over = false;
+    pinv = 0; plastAtk = -9; cb = 0; spawnT = 1; over = false; chg = false;
 }
 
-void GameLayer::attack() {
+void GameLayer::attack(bool charged) {
     if (over) { if (T - deadT > 1.f) resetGame(); return; }
     if (pst == 2 || pst == 3) return;
-    cb = (T - plastAtk < .7f) ? (cb % 3) + 1 : 1;
+    if (charged) { cb = 3; chg = true; }
+    else { chg = false; cb = (T - plastAtk < .7f) ? (cb % 3) + 1 : 1; }
     pst = 2; pt = 0; phit = false; plastAtk = T;
     sfx("audio/sfx_char_gumball_chop.ogg", .6f);
 }
@@ -159,7 +163,7 @@ void GameLayer::spawnEnemy() {
     e.n->addChild(e.head); e.n->addChild(e.armR);
     addChild(e.n);
     e.x = (rand() % 2) ? xmax + 25 : xmin - 25;
-    e.y = 25 + rand() % 105;
+    e.y = 25 + rand() % 135;
     e.hp = 3; e.st = 0; e.t = 0; e.hurt = 0; e.f = 1; e.did = false;
     e.sp = 35 + rand() % 15 + wave * 3;
     E.push_back(e);
@@ -177,16 +181,18 @@ void GameLayer::update(float dt) {
             float len = a.size() / 14.f;
             if (!phit && pt > len * .5f) {
                 phit = true;
-                float r = (cb == 3) ? 95.f : 75.f;
+                float r = chg ? 120.f : ((cb == 3) ? 95.f : 75.f);
+                int dmg = chg ? 3 : ((cb == 3) ? 2 : 1);
+                float kb = chg ? 70.f : ((cb == 3) ? 40.f : 14.f);
                 for (auto& e : E) {
                     if (e.st != 2 && fabsf(e.y - py) < 35 && (e.x - px) * pf > -10 && fabsf(e.x - px) < r) {
-                        e.hp -= (cb == 3) ? 2 : 1; e.hurt = .25f; e.x += pf * ((cb == 3) ? 40 : 14); score += 5;
-                        sfx(cb == 3 ? "audio/sfx_char_criticalhit.ogg" : "audio/sfx_char_impactnormal.ogg", .7f);
+                        e.hp -= dmg; e.hurt = .25f; e.x += pf * kb; score += 5;
+                        sfx((chg || cb == 3) ? "audio/sfx_char_criticalhit.ogg" : "audio/sfx_char_impactnormal.ogg", .7f);
                         if (e.hp <= 0) { e.st = 2; e.t = 0; score += 10; sfx("audio/sfx_npc_breadman_death.ogg", .7f); }
                     }
                 }
             }
-            if (pt >= len) { pst = 0; pt = 0; }
+            if (pt >= len) { pst = 0; pt = 0; chg = false; }
         } else if (pst == 3) {
             if (pt > .3f) { pst = 0; pt = 0; }
         } else {
@@ -197,7 +203,7 @@ void GameLayer::update(float dt) {
             } else pst = 0;
         }
         px = std::max(xmin, std::min(xmax, px));
-        py = std::max(20.f, std::min(130.f, py));
+        py = std::max(20.f, std::min(160.f, py));
 
         spawnT -= dt;
         int alive = 0;
@@ -221,7 +227,7 @@ void GameLayer::update(float dt) {
                 if (!e.did && e.t > .36f) {
                     e.did = true;
                     if (fabsf(px - e.x) < 75 && fabsf(py - e.y) < 30 && pinv <= 0) {
-                        hp -= 12; pinv = .6f; pst = 3; pt = 0;
+                        hp -= 12; pinv = .6f; pst = 3; pt = 0; chg = false;
                         if (hp <= 0) {
                             over = true; deadT = T; pst = 4; pt = 0; if (score > best) best = score;
                             sfx("audio/sfx_char_gumball_faint.ogg", .8f);
@@ -247,6 +253,10 @@ void GameLayer::render() {
     pn->setScaleX(pf * S); pn->setScaleY(S);
     pn->setLocalZOrder(1000 - (int)py);
     pn->setOpacity((pinv > 0 && ((int)(T * 20) % 2)) ? 120 : 255);
+    float held = (atkId >= 0 && !over) ? (T - atkStart) : 0.f;
+    if (held >= .8f) pn->setColor(((int)(T * 12) % 2) ? Color3B(255, 255, 90) : Color3B(255, 190, 40));
+    else if (held >= .3f) pn->setColor(Color3B(255, 235, 140));
+    else pn->setColor(Color3B::WHITE);
     if (pst == 2) { setF(pBody, pick(ch[cb - 1], pt, false)); pL->setVisible(false); pR->setVisible(false); }
     else if (pst == 1) { setF(pL, pick(runL, pt, true)); setF(pBody, pick(run, pt, true)); setF(pR, pick(runR, pt, true)); }
     else if (pst == 4) { setF(pBody, pick(death, pt, false)); pL->setVisible(false); pR->setVisible(false); }
@@ -279,13 +289,8 @@ void GameLayer::render() {
     hud->drawSolidRect(Vec2(bx, by), Vec2(bx + 124, by + 12), Color4F(0, 0, 0, .55f));
     hud->drawSolidRect(Vec2(bx + 2, by + 2), Vec2(bx + 2 + 120 * std::max(0, hp) / 100.f, by + 10),
                        hp > 30 ? Color4F(.37f, .81f, .37f, 1) : Color4F(.9f, .28f, .24f, 1));
-    hud->drawSolidCircle(Vec2(org.x + vs.width - 60, org.y + 60), 34, 0, 24, Color4F(1, 1, 1, .2f));
-    if (joyId >= 0) {
-        hud->drawCircle(joyO, 34, 0, 24, false, Color4F(1, 1, 1, .4f));
-        hud->drawSolidCircle(joyO + joyV * 30, 14, 0, 16, Color4F(1, 1, 1, .5f));
-    }
     lbl->setString(StringUtils::format("Pontos %d  Onda %d", score, wave));
-    if (over) lblOver->setString(StringUtils::format("Fim de jogo\nPontos %d  Recorde %d\nToque em Atacar", score, best));
+    if (over) lblOver->setString(StringUtils::format("Fim de jogo\nPontos %d  Recorde %d\nToque para jogar de novo", score, best));
     else lblOver->setString("");
 }
 

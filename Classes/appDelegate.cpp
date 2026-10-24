@@ -126,6 +126,7 @@ static void loadEnemyFrames() {
 /* ---------- personagens ---------- */
 enum { H_GUM, H_DAR, H_ANA, H_N };
 static const char* HN[3] = {"gumball", "darwin", "anais"};
+static const char* ABIL[3] = {"gui_specials_gumball_sugarrush.png", "gui_specials_darwin_bubleshield.png", "gui_specials_anais_heal.png"};
 struct HF {
     Frames idle, idleA, run, runA, runB, atk[3], chg, hold, death, hit, shootH, shot;
     SpriteFrame* s[4];
@@ -217,12 +218,22 @@ private:
     void spawnEnemy(int type);
     void hitPlayer(int dmg);
     void killEnemy(Enemy& e);
+    void landHit();
     void switchTo(int i);
+    void useAbility();
     void cheese(Enemy& e, float dx, float dy, float dt);
     float persp(float y) const;
     float atkLen() const;
     Vec2 toScr(float x, float y) const { return Vec2(bgL + x * ws, org.y + y * ws); }
-    Vec2 portPos(int i) const { return Vec2(org.x + 42 + i * 60, org.y + vs.height - 30); }
+    Vec2 wheelC() const { return Vec2(org.x + vs.width - 70, org.y + vs.height - 62); }
+    Vec2 abilPos() const { return Vec2(org.x + 40, org.y + vs.height - 44); }
+    Vec2 pausePos() const { return Vec2(org.x + vs.width - 20, org.y + vs.height - 20); }
+    Vec2 portPos(int i) const {
+        int rel = (i - act + 3) % 3;
+        if (rel == 0) return wheelC();
+        if (rel == 1) return wheelC() + Vec2(54, -18);
+        return wheelC() + Vec2(-48, 22);
+    }
     void renderHero(float held);
     void render();
 
@@ -237,13 +248,20 @@ private:
     float px = 200, py = 70, pt = 0, pinv = 0, plastAtk = -9, T = 0;
     int pf = 1, pst = 0, cb = 0, score = 0, act = 0, projId = 0;
     int hhp[3];
+    float abilT[3];
+    bool abilReady[3];
+    float rushT = 0, shieldT = 0, healFx = 0, comboT = 0;
+    int combo = 0;
+    bool paused = false;
     bool phit = false, chg = false;
     std::vector<Enemy> E;
     std::vector<Proj> P;
     Vec2 joyO, joyV; int joyId = -1;
     int atkId = -1; float atkStart = 0;
-    Sprite *port[3], *fnt[3], *heartsSpr = nullptr;
-    Label *lbl = nullptr, *lblTitle = nullptr, *lblOver = nullptr;
+    Sprite *port[3], *fnt[3], *heartsSpr = nullptr, *abilBtn = nullptr, *pauseBtn = nullptr;
+    Sprite *comboTxt = nullptr, *comboRing = nullptr;
+    DrawNode* hud = nullptr;
+    Label *lbl = nullptr, *lblTitle = nullptr, *lblOver = nullptr, *lblCombo = nullptr;
 };
 
 void GameLayer::loadLevels() {
@@ -312,6 +330,7 @@ bool GameLayer::init() {
     cache->addSpriteFramesWithFile("data/mfm-game-gumball-sprites.plist", "textures/mfm-game-gumball-sprites.png");
     cache->addSpriteFramesWithFile("data/mfm-game-anais-sprites.plist", "textures/mfm-game-anais-sprites.png");
     cache->addSpriteFramesWithFile("data/mfm-game-sprites.plist", "textures/mfm-game-sprites.png");
+    cache->addSpriteFramesWithFile("data/mfm-game-nice-sprites.plist", "textures/mfm-game-nice-sprites.png");
     cache->addSpriteFramesWithFile("data/mfm-game-npcbreadman-sprites.plist", "textures/mfm-game-npcbreadman-sprites.png");
     cache->addSpriteFramesWithFile("data/mfm-game-npc1-sprites.plist", "textures/mfm-game-npc1-sprites.png");
 
@@ -326,27 +345,38 @@ bool GameLayer::init() {
     for (int i = 0; i < 3; i++) {
         port[i] = Sprite::create(); fnt[i] = Sprite::create();
         addChild(port[i], 5003); addChild(fnt[i], 5004);
-        hhp[i] = 6;
+        hhp[i] = 6; abilT[i] = 8; abilReady[i] = false;
     }
-    heartsSpr = Sprite::create(); addChild(heartsSpr, 5003);
+    heartsSpr = Sprite::create(); addChild(heartsSpr, 5007);
+    abilBtn = Sprite::create(); addChild(abilBtn, 5005);
+    pauseBtn = Sprite::create(); addChild(pauseBtn, 5008);
+    comboTxt = Sprite::create(); comboRing = Sprite::create();
+    addChild(comboRing, 5004); addChild(comboTxt, 5005);
+    hud = DrawNode::create(); addChild(hud, 5006);
 
     lbl = Label::createWithSystemFont("", "Arial", 16);
-    lbl->setAnchorPoint(Vec2(1, 1)); lbl->setPosition(org.x + vs.width - 10, org.y + vs.height - 8);
+    lbl->setAnchorPoint(Vec2(1, 1)); lbl->setPosition(wheelC().x - 78, org.y + vs.height - 8);
     addChild(lbl, 5001);
     lblTitle = Label::createWithSystemFont("", "Arial", 16);
-    lblTitle->setAnchorPoint(Vec2(.5f, 1)); lblTitle->setPosition(cx + 40, org.y + vs.height - 8);
+    lblTitle->setAnchorPoint(Vec2(0, 1)); lblTitle->setPosition(org.x + 84, org.y + vs.height - 8);
     addChild(lblTitle, 5001);
+    lblCombo = Label::createWithSystemFont("", "Arial", 20);
+    lblCombo->setPosition(cx, org.y + vs.height - 40);
+    addChild(lblCombo, 5006);
     lblOver = Label::createWithSystemFont("", "Arial", 22);
     lblOver->setPosition(cx, org.y + vs.height / 2);
-    addChild(lblOver, 5002);
+    addChild(lblOver, 5009);
 
     auto l = EventListenerTouchAllAtOnce::create();
     l->onTouchesBegan = [this](const std::vector<Touch*>& ts, Event*) {
         for (auto t : ts) {
             Vec2 p = t->getLocation();
+            if ((p - pausePos()).length() < 24.f) { paused = !paused; continue; }
+            if (paused) continue;
+            if ((p - abilPos()).length() < 34.f) { useAbility(); continue; }
             bool onPort = false;
             for (int i = 0; i < 3; i++) {
-                if ((p - portPos(i)).length() < 30.f) { switchTo(i); onPort = true; }
+                if (i != act && (p - portPos(i)).length() < 30.f) { switchTo(i); onPort = true; break; }
             }
             if (onPort) continue;
             if (p.x > cx) { if (atkId < 0) { atkId = t->getID(); atkStart = T; } }
@@ -363,7 +393,7 @@ bool GameLayer::init() {
     l->onTouchesEnded = [this](const std::vector<Touch*>& ts, Event*) {
         for (auto t : ts) {
             if (t->getID() == joyId) { joyId = -1; joyV = Vec2::ZERO; }
-            if (t->getID() == atkId) { float hold = T - atkStart; atkId = -1; attack(hold >= .8f); }
+            if (t->getID() == atkId) { float hold = T - atkStart; atkId = -1; if (!paused) attack(hold >= .8f); }
         }
     };
     l->onTouchesCancelled = [this](const std::vector<Touch*>& ts, Event*) {
@@ -417,10 +447,11 @@ void GameLayer::startLevel(int idx) {
     py = (L.start.y > 0) ? L.start.y : 100;
     px = std::max(25.f, std::min(bgW - 25.f, px));
     py = std::max(15.f, std::min(L.maxY - 15.f, py));
-    for (int i = 0; i < 3; i++) hhp[i] = 6;
+    for (int i = 0; i < 3; i++) { hhp[i] = 6; abilT[i] = 8; abilReady[i] = false; }
     act = (L.startChar == "Darwin") ? H_DAR : (L.startChar == "Anais") ? H_ANA : H_GUM;
     pf = 1; pst = 0; pt = 0; score = 0; pinv = 0; plastAtk = -9; cb = 0;
     chg = false; levelT = 0; phase = 0; spawnT = .6f;
+    rushT = 0; shieldT = 0; healFx = 0; combo = 0; comboT = 0; paused = false;
     joyId = -1; joyV = Vec2::ZERO; atkId = -1;
 }
 
@@ -428,6 +459,22 @@ void GameLayer::switchTo(int i) {
     if (phase != 0 || i == act || hhp[i] <= 0) return;
     act = i; pst = 0; pt = 0; chg = false; cb = 0; atkId = -1;
     sfx("audio/sfx_gui_wheel_tap.ogg", .6f);
+}
+
+void GameLayer::useAbility() {
+    if (phase != 0 || abilT[act] > 0) return;
+    abilT[act] = 14.f; abilReady[act] = false;
+    sfx("audio/sfx_gui_abilitypress.ogg", .6f);
+    if (act == H_GUM) { rushT = 6.f; sfx("audio/sfx_char_gumball_sugarrush.ogg", .7f); }
+    else if (act == H_DAR) { shieldT = 5.f; sfx("audio/sfx_char_darwin_bubbleshield_on.ogg", .7f); }
+    else {
+        for (int i = 0; i < 3; i++) if (hhp[i] > 0) hhp[i] = std::min(6, hhp[i] + 3);
+        healFx = .8f; sfx("audio/sfx_char_anais_heal.ogg", .7f);
+    }
+}
+
+void GameLayer::landHit() {
+    combo++; comboT = 2.5f;
 }
 
 float GameLayer::atkLen() const {
@@ -448,344 +495,4 @@ void GameLayer::attack(bool charged) {
         return;
     }
     if (pst == 2 || pst == 3) return;
-    if (charged) { cb = 3; chg = true; }
-    else { chg = false; cb = (T - plastAtk < .7f) ? (cb % 3) + 1 : 1; }
-    pst = 2; pt = 0; phit = false; plastAtk = T;
-    if (act == H_GUM) sfx("audio/sfx_char_gumball_chop.ogg", .6f);
-    else if (act == H_ANA) sfx(StringUtils::format("audio/sfx_char_anais_punch%d.ogg", chg ? 5 : cb), .6f);
-}
-
-void GameLayer::spawnEnemy(int type) {
-    const Level& L = LV[cur];
-    Enemy e;
-    e.type = type;
-    e.n = Node::create(); e.n->setCascadeOpacityEnabled(true);
-    for (int i = 0; i < 6; i++) { e.sp[i] = Sprite::create(); e.n->addChild(e.sp[i]); }
-    addChild(e.n);
-    e.x = (rand() % 2) ? bgW + 30 : -30;
-    e.y = 20 + rand() % (int)std::max(30.f, L.maxY - 40);
-    e.hp = TD[type].hp; e.t = 0; e.hurt = 0; e.dir = 1;
-    e.spd = TD[type].sp * (.9f + (rand() % 20) / 100.f);
-    e.st = 0; e.f = 1; e.did = false; e.pid = -1;
-    E.push_back(e);
-}
-
-void GameLayer::hitPlayer(int dmg) {
-    if (pinv > 0 || phase != 0) return;
-    hhp[act] = std::max(0, hhp[act] - dmg);
-    pinv = .8f; chg = false;
-    if (hhp[act] <= 0) {
-        sfx(act == H_GUM ? "audio/sfx_char_gumball_faint.ogg"
-            : (act == H_DAR ? "audio/sfx_char_darwin_faint.ogg" : "audio/sfx_char_anais_faint.ogg"), .8f);
-        int nx = -1;
-        for (int k = 1; k <= 2; k++) { int j = (act + k) % 3; if (hhp[j] > 0) { nx = j; break; } }
-        if (nx < 0) { phase = 2; phaseT = T; pst = 4; pt = 0; }
-        else { act = nx; pst = 0; pt = 0; pinv = 1.2f; cb = 0; atkId = -1; sfx("audio/sfx_gui_wheel_tap.ogg", .6f); }
-    } else {
-        pst = 3; pt = 0;
-        if (act == H_GUM) sfx(StringUtils::format("audio/sfx_char_gumball_hurt%d.ogg", 1 + rand() % 4), .7f);
-        else if (act == H_DAR) sfx(StringUtils::format("audio/sfx_char_darwin_hurt%d.ogg", 1 + rand() % 2), .7f);
-        else sfx(StringUtils::format("audio/sfx_char_anais_hurt%d.ogg", 1 + rand() % 2), .7f);
-    }
-}
-
-void GameLayer::killEnemy(Enemy& e) {
-    e.st = 2; e.t = 0; score += 10;
-    deathSfx(e.type);
-}
-
-void GameLayer::cheese(Enemy& e, float dx, float dy, float dt) {
-    if (e.st == 0) {
-        e.f = (dx > 0) ? 1 : -1;
-        if (e.hurt <= 0) {
-            if (fabsf(dy) < 22 && fabsf(dx) > 70 && fabsf(dx) < 300) { e.st = 5; e.t = 0; attackSfx(T_CHEESE); }
-            else {
-                float dist = sqrtf(dx * dx + dy * dy);
-                if (dist > .1f) { e.x += dx / dist * e.spd * dt; e.y += dy / dist * e.spd * .7f * dt; }
-            }
-        }
-    } else if (e.st == 5) {
-        if (e.t > .4f) { e.st = 3; e.t = 0; e.dir = (dx > 0) ? 1.f : -1.f; e.did = false; }
-    } else if (e.st == 3) {
-        e.x += e.dir * 230 * dt; e.f = (e.dir > 0) ? 1 : -1;
-        if (!e.did && fabsf(px - e.x) < 45 && fabsf(py - e.y) < 28) { e.did = true; hitPlayer((int)TD[T_CHEESE].dmg); }
-        if (e.t > .9f || e.x < 0 || e.x > bgW) { e.st = 4; e.t = 0; }
-    } else if (e.st == 4) {
-        if (e.t > 1.2f) { e.st = 0; e.t = 0; }
-    }
-}
-
-void GameLayer::update(float dt) {
-    if (dt > .05f) dt = .05f;
-    T += dt;
-    const Level& L = LV[cur];
-    if (phase == 0) {
-        levelT += dt;
-        Vec2 m = joyV;
-        pt += dt;
-        if (pinv > 0) pinv -= dt;
-        if (pst == 2) {
-            float len = atkLen();
-            float hitT = (act == H_DAR) ? (chg ? .12f : .14f) : len * .5f;
-            if (!phit && pt > hitT) {
-                phit = true;
-                if (act == H_DAR) {
-                    Proj pr;
-                    pr.s = Sprite::create(); addChild(pr.s);
-                    pr.x = px + pf * 28; pr.y = py + 42;
-                    pr.vx = pf * (chg ? 300.f : 340.f);
-                    pr.life = 1.1f; pr.t = 0; pr.sc = chg ? 1.8f : 1.f;
-                    pr.dmg = chg ? 3 : 1; pr.pierce = chg; pr.id = ++projId;
-                    P.push_back(pr);
-                    sfx(chg ? "audio/sfx_char_darwin_chargerelease.ogg" : "audio/sfx_char_darwin_shoot.ogg", .6f);
-                } else {
-                    float base = (act == H_ANA) ? 85.f : 75.f;
-                    float r = chg ? base + 45.f : ((cb == 3) ? base + 20.f : base);
-                    int dmg = chg ? 3 : ((cb == 3) ? 2 : 1);
-                    float kb = chg ? 70.f : ((cb == 3) ? 40.f : 14.f);
-                    for (auto& e : E) {
-                        if (e.st != 2 && fabsf(e.y - py) < 35 && (e.x - px) * pf > -10 && fabsf(e.x - px) < r) {
-                            e.hp -= dmg; e.hurt = .25f; e.x += pf * kb; score += 5;
-                            sfx((chg || cb == 3) ? "audio/sfx_char_criticalhit.ogg" : "audio/sfx_char_impactnormal.ogg", .7f);
-                            if (e.hp <= 0) killEnemy(e);
-                        }
-                    }
-                }
-            }
-            if (pt >= len) { pst = 0; pt = 0; chg = false; }
-        } else if (pst == 3) {
-            if (pt > .3f) { pst = 0; pt = 0; }
-        } else {
-            if (m.length() > .15f) {
-                px += m.x * 110 * dt; py += m.y * 80 * dt;
-                if (fabsf(m.x) > .2f) pf = (m.x > 0) ? 1 : -1;
-                pst = 1;
-            } else pst = 0;
-        }
-        px = std::max(25.f, std::min(bgW - 25.f, px));
-        py = std::max(15.f, std::min(L.maxY - 15.f, py));
-
-        for (size_t i = 0; i < P.size();) {
-            Proj& p = P[i];
-            p.t += dt; p.x += p.vx * dt; p.life -= dt;
-            bool rm = (p.life <= 0 || p.x < -40 || p.x > bgW + 40);
-            if (!rm) {
-                for (auto& e : E) {
-                    if (e.st == 2 || e.pid == p.id) continue;
-                    if (fabsf(e.x - p.x) < 30 && fabsf(e.y - (p.y - 42)) < 30) {
-                        e.pid = p.id; e.hp -= p.dmg; e.hurt = .25f;
-                        e.x += (p.vx > 0) ? 8.f : -8.f; score += 5;
-                        sfx("audio/sfx_char_darwin_shootimpact.ogg", .6f);
-                        if (e.hp <= 0) killEnemy(e);
-                        if (!p.pierce) { rm = true; break; }
-                    }
-                }
-            }
-            if (rm) { p.s->removeFromParent(); P.erase(P.begin() + i); }
-            else i++;
-        }
-
-        int alive = 0;
-        for (auto& e : E) if (e.st != 2) alive++;
-
-        spawnT -= dt;
-        if (levelT < L.dur && spawnT <= 0) {
-            const Range* r = nullptr;
-            for (auto& g : L.ranges) if (levelT >= g.t0 && levelT <= g.t1 + 1.f) r = &g;
-            if (!r && !L.ranges.empty()) r = &L.ranges.back();
-            if (r && !L.groups.empty() && alive < (int)r->cap) {
-                const Group& g = L.groups[rand() % L.groups.size()];
-                for (int k = 0; k < g.count; k++) spawnEnemy(g.type);
-            }
-            spawnT = r ? std::max(.8f, std::min(4.f, 3.5f / std::max(1.f, r->rate))) : .5f;
-        }
-
-        for (auto& e : E) {
-            e.t += dt;
-            if (e.hurt > 0) e.hurt -= dt;
-            if (e.st == 2) continue;
-            const TypeDef& d = TD[e.type];
-            float dx = px - e.x, dy = py - e.y;
-            if (e.type == T_CHEESE) { cheese(e, dx, dy, dt); continue; }
-            e.f = (dx > 0) ? 1 : -1;
-            if (e.st == 0) {
-                if (e.hurt <= 0) {
-                    float dist = sqrtf(dx * dx + dy * dy);
-                    if (fabsf(dx) < d.range && fabsf(dy) < 22) { e.st = 1; e.t = 0; e.did = false; attackSfx(e.type); }
-                    else if (dist > .1f) { e.x += dx / dist * e.spd * dt; e.y += dy / dist * e.spd * .7f * dt; }
-                }
-            } else if (e.st == 1) {
-                if (!e.did && e.t > d.hitT) {
-                    e.did = true;
-                    if (fabsf(px - e.x) < d.range + 13 && fabsf(py - e.y) < 30) hitPlayer((int)d.dmg);
-                }
-                if (e.t > d.dur) { e.st = 0; e.t = 0; }
-            }
-        }
-        for (size_t i = 0; i < E.size();) {
-            if (E[i].st == 2 && E[i].t > 1.2f) { E[i].n->removeFromParent(); E.erase(E.begin() + i); }
-            else i++;
-        }
-
-        alive = 0;
-        for (auto& e : E) if (e.st != 2) alive++;
-        if (phase == 0 && levelT >= L.dur && alive == 0) {
-            phase = 1; phaseT = T;
-            int nx = nextPlayable(cur + 1);
-            if (nx > unlocked) {
-                unlocked = nx;
-                UserDefault::getInstance()->setIntegerForKey("mfm_unlocked", unlocked);
-                UserDefault::getInstance()->flush();
-            }
-            sfx("audio/sfx_gui_achievementcomplete.ogg", .7f);
-        }
-    } else pt += dt;
-    render();
-}
-
-void GameLayer::renderHero(float held) {
-    const HF& F = HFR[act];
-    for (int i = 0; i < 5; i++) ps[i]->setVisible(false);
-    if (pst == 4) { setF(ps[1], pick(F.death, pt, false)); return; }
-    if (pst == 3) { setF(ps[1], pick(F.hit, pt, true)); return; }
-    if (pst == 2) {
-        if (act == H_DAR) {
-            if (chg) setF(ps[1], pickN(F.chg, pt / .4f));
-            else { setF(ps[0], F.s[2]); setF(ps[1], pickN(F.shootH, pt / .32f)); }
-        } else {
-            const Frames& a = chg ? F.chg : F.atk[std::max(1, cb) - 1];
-            setF(ps[1], pick(a, pt, false));
-        }
-        return;
-    }
-    if (held >= .3f && !F.hold.empty()) { setF(ps[1], pick(F.hold, held, true)); return; }
-    if (pst == 1) {
-        if (act == H_DAR) {
-            setF(ps[0], pick(F.run, pt, true)); setF(ps[1], F.s[1]);
-            setF(ps[2], pick(F.runA, pt, true)); setF(ps[3], pick(F.runB, pt, true));
-        } else if (act == H_GUM) {
-            setF(ps[0], pick(F.runA, pt, true)); setF(ps[1], pick(F.run, pt, true)); setF(ps[2], pick(F.runB, pt, true));
-        } else {
-            setF(ps[1], pick(F.run, pt, true)); setF(ps[2], pick(F.runA, pt, true));
-        }
-        return;
-    }
-    if (act == H_DAR) setF(ps[0], F.s[0]);
-    setF(ps[1], pick(F.idle, pt, true));
-    setF(ps[2], pick(F.idleA, pt, true));
-}
-
-void GameLayer::render() {
-    const Level& L = LV[cur];
-    float ps_ = ws * persp(py);
-    Vec2 sp = toScr(px, py);
-    pn->setPosition(sp.x, sp.y + 70 * ps_);
-    pn->setScaleX(pf * ps_); pn->setScaleY(ps_);
-    pn->setLocalZOrder(1000 - (int)sp.y);
-    pn->setOpacity((pinv > 0 && ((int)(T * 20) % 2)) ? 120 : 255);
-    float held = (atkId >= 0 && phase == 0) ? (T - atkStart) : 0.f;
-    if (held >= .8f) pn->setColor(((int)(T * 12) % 2) ? Color3B(255, 255, 90) : Color3B(255, 190, 40));
-    else if (held >= .3f) pn->setColor(Color3B(255, 235, 140));
-    else pn->setColor(Color3B::WHITE);
-    renderHero(held);
-
-    for (auto& p : P) {
-        Vec2 q = toScr(p.x, p.y);
-        float s = ws * persp(p.y - 42) * p.sc;
-        p.s->setPosition(q);
-        p.s->setScaleX((p.vx > 0 ? 1.f : -1.f) * s); p.s->setScaleY(s);
-        p.s->setLocalZOrder(1000 - (int)q.y);
-        setF(p.s, pick(HFR[H_DAR].shot, p.t, true));
-    }
-
-    for (auto& e : E) {
-        const TypeDef& d = TD[e.type];
-        const EF& f = EFR[e.type];
-        float es = ws * persp(e.y) * d.scale;
-        Vec2 q = toScr(e.x, e.y);
-        e.n->setPosition(q.x, q.y + d.foot * es);
-        e.n->setScaleX(e.f * es); e.n->setScaleY(es);
-        e.n->setLocalZOrder(1000 - (int)q.y);
-        e.n->setOpacity(255);
-        for (int i = 0; i < 6; i++) e.sp[i]->setVisible(false);
-        if (e.st == 2) {
-            e.n->setOpacity((GLubyte)(255 * std::max(0.f, 1.f - e.t / 1.2f)));
-            if (e.type == T_BREAD) setF(e.sp[2], f.s[4]);
-            else if (e.type == T_BROC || e.type == T_CARROT) setF(e.sp[2], pickN(f.f, e.t / .5f));
-            else if (e.type == T_STEAK) setF(e.sp[0], f.s[0]);
-            else setF(e.sp[0], pickN(f.f, e.t / .5f));
-            continue;
-        }
-        if (e.type == T_BREAD) {
-            if (e.st == 1) {
-                setF(e.sp[0], frm(e.t < .3f ? "npc_breadman_attack_legs1.png" : "npc_breadman_attack_legs2.png"));
-                setF(e.sp[3], pick(f.b, e.t, false));
-            } else {
-                setF(e.sp[0], pick(f.a, e.t, true)); setF(e.sp[1], f.s[2]);
-                setF(e.sp[2], f.s[0]); setF(e.sp[3], f.s[1]); setF(e.sp[5], f.s[3]);
-            }
-        } else if (e.type == T_BROC || e.type == T_CARROT) {
-            if (e.st == 1) {
-                float pr = e.t / d.dur;
-                setF(e.sp[0], f.a.empty() ? nullptr : f.a[0]);
-                setF(e.sp[1], pickN(f.d, pr)); setF(e.sp[2], f.s[0]);
-                setF(e.sp[3], f.s[2] ? f.s[2] : f.s[1]); setF(e.sp[4], f.s[4]);
-                setF(e.sp[5], pickN(f.e, pr));
-            } else {
-                setF(e.sp[0], pick(f.a, e.t, true)); setF(e.sp[1], pick(f.b, e.t, true));
-                setF(e.sp[2], f.s[0]); setF(e.sp[3], f.s[1]); setF(e.sp[4], f.s[3]);
-                setF(e.sp[5], pick(f.c, e.t, true));
-            }
-        } else if (e.type == T_STEAK) {
-            if (e.st == 1) { setF(e.sp[0], pickN(f.b, e.t / d.dur)); setF(e.sp[1], pickN(f.c, e.t / d.dur)); }
-            else setF(e.sp[0], pick(f.a, e.t, true));
-        } else {
-            if (e.st == 3) setF(e.sp[0], pick(f.b, e.t, true));
-            else if (e.st == 4) setF(e.sp[0], pick(f.c, e.t, true));
-            else setF(e.sp[0], f.s[0]);
-        }
-    }
-
-    for (int i = 0; i < 3; i++) {
-        int h = hhp[i];
-        int lv = (h >= 5) ? 6 : (h >= 3) ? 4 : (h >= 1) ? 2 : 0;
-        setF(port[i], frm(StringUtils::format("gui_character_%s_health%d.png", HN[i], lv)));
-        port[i]->setPosition(portPos(i));
-        port[i]->setScale(i == act ? .9f : .6f);
-        port[i]->setOpacity(h <= 0 ? 90 : (i == act ? 255 : 170));
-        if (h <= 0) { setF(fnt[i], frm("gui_character_fainted.png")); fnt[i]->setPosition(portPos(i)); fnt[i]->setScale(.6f); }
-        else fnt[i]->setVisible(false);
-    }
-    Vec2 pa = portPos(act);
-    setF(heartsSpr, frm(StringUtils::format("gui_character_hearts_%d.png", hhp[act])));
-    heartsSpr->setPosition(pa.x, pa.y - 30); heartsSpr->setScale(.8f);
-
-    int remain = std::max(0, (int)ceilf(L.dur - levelT));
-    lblTitle->setString(StringUtils::format("Fase %d-%d    Tempo %d", L.ch, L.no, remain));
-    lbl->setString(StringUtils::format("Pontos %d", score));
-    if (phase == 1) lblOver->setString(StringUtils::format("Fase concluida!\nPontos %d\nToque para continuar", score));
-    else if (phase == 2) lblOver->setString("Fim de jogo\nToque para tentar de novo");
-    else lblOver->setString("");
-}
-
-AppDelegate::AppDelegate() {}
-AppDelegate::~AppDelegate() {}
-
-void AppDelegate::initGLContextAttrs() {
-    GLContextAttrs glContextAttrs = {8, 8, 8, 8, 24, 8, 0};
-    GLView::setGLContextAttrs(glContextAttrs);
-}
-
-bool AppDelegate::applicationDidFinishLaunching() {
-    auto director = Director::getInstance();
-    auto glview = director->getOpenGLView();
-    if (!glview) { glview = GLViewImpl::create("Mutant Fridge Mayhem"); director->setOpenGLView(glview); }
-    glview->setDesignResolutionSize(480, 320, ResolutionPolicy::FIXED_HEIGHT);
-    auto scene = Scene::create();
-    scene->addChild(GameLayer::create());
-    director->runWithScene(scene);
-    return true;
-}
-
-void AppDelegate::applicationDidEnterBackground() { Director::getInstance()->stopAnimation(); AudioEngine::pauseAll(); }
-void AppDelegate::applicationWillEnterForeground() { Director::getInstance()->startAnimation(); AudioEngine::resumeAll(); }
+    if (charged) { cb = 3; chg = true;

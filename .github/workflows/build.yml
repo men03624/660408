@@ -56,9 +56,13 @@ jobs:
       - name: Aplicar assets 2x
         run: |
           ls -la assets_ipa2x.zip
-          unzip -o assets_ipa2x.zip -d $HOME/proj/MutantFridge/Resources
-          sed -i 's/glview->setDesignResolutionSize(480, 320, ResolutionPolicy::FIXED_HEIGHT);/&\n    director->setContentScaleFactor(2.0f);/' $HOME/proj/MutantFridge/Classes/AppDelegate.cpp
-          grep -n "ContentScaleFactor" $HOME/proj/MutantFridge/Classes/AppDelegate.cpp
+          unzip -o -q assets_ipa2x.zip -d $HOME/proj/MutantFridge/Resources
+          F=$HOME/proj/MutantFridge/Classes/AppDelegate.cpp
+          echo "linhas do AppDelegate.cpp:"; wc -l $F
+          echo "ocorrencias de setDesignResolutionSize:"; grep -c "setDesignResolutionSize" $F || true
+          echo "ultima linha do arquivo:"; tail -n 1 $F
+          grep -q "setContentScaleFactor" $F || sed -i 's/setDesignResolutionSize(\([^;]*\));/setDesignResolutionSize(\1); director->setContentScaleFactor(2.0f);/' $F
+          grep -n "ContentScaleFactor" $F || echo "AVISO: nao consegui inserir o ajuste de escala"
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '11' }
       - name: Deixar so o CMake 3.10.2

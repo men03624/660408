@@ -50,6 +50,9 @@ jobs:
           echo "AppDelegate encontrado em: $APP"
           test -n "$APP"
           cp "$APP" $HOME/proj/MutantFridge/Classes/AppDelegate.cpp
+          find . -name '*.inc' -not -path './.git/*' -exec cp {} $HOME/proj/MutantFridge/Classes/ \;
+          for f in $HOME/proj/MutantFridge/Classes/*.inc; do echo "$f: $(wc -c < $f) bytes; ultima linha: $(tail -n 1 $f)"; done
+          echo "AppDelegate.cpp: $(wc -l < $HOME/proj/MutantFridge/Classes/AppDelegate.cpp) linhas"
       - name: Converter plists
         run: |
           python3 -c "import plistlib,glob;fs=glob.glob('$HOME/proj/MutantFridge/Resources/data/*.plist');ds=[(f,plistlib.dumps(plistlib.load(open(f,'rb')),fmt=plistlib.FMT_XML)) for f in fs];[open(f,'wb').write(d) for f,d in ds];print('plists convertidos:',len(fs))"
@@ -57,17 +60,7 @@ jobs:
         run: |
           ls -la assets_ipa2x.zip
           unzip -o -q assets_ipa2x.zip -d $HOME/proj/MutantFridge/Resources
-          F=$HOME/proj/MutantFridge/Classes/AppDelegate.cpp
-          echo "--- caracteres nao-ASCII antes do reparo ---"
-          grep -nP '[^\x00-\x7F]' $F | head -10 || echo "nenhum"
-          perl -CSD -pi -e 's/\x{FF5B}/{/g; s/\x{FF5D}/}/g; s/\x{FE5B}/{/g; s/\x{FE5C}/}/g; s/\x{2774}/{/g; s/\x{2775}/}/g; s/\x{00A0}/ /g; s/[\x{200B}-\x{200F}\x{2028}\x{2029}\x{FEFF}]//g; s/[\x{2018}\x{2019}]/\x27/g; s/[\x{201C}\x{201D}]/"/g; s/\r//g' $F
-          perl -pi -e 's/^\s*if \(charged\).*$/    if (charged) { cb = 3; chg = true; }/' $F
-          echo "--- linhas 496 a 499 ---"
-          sed -n '496,499p' $F | cat -A | cut -c1-150
-          echo "abre chaves: $(tr -cd '{' < $F | wc -c)  fecha chaves: $(tr -cd '}' < $F | wc -c)"
-          echo "linhas: $(wc -l < $F)"
-          grep -q "setContentScaleFactor" $F || sed -i 's/setDesignResolutionSize(\([^;]*\));/setDesignResolutionSize(\1); director->setContentScaleFactor(2.0f);/' $F
-          grep -n "ContentScaleFactor" $F || echo "AVISO: nao consegui inserir o ajuste de escala"
+          grep -n "ContentScaleFactor" $HOME/proj/MutantFridge/Classes/AppDelegate.cpp || echo "AVISO: sem ajuste de escala"
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '11' }
       - name: Deixar so o CMake 3.10.2
